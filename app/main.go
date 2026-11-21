@@ -22,7 +22,7 @@ import (
 const (
 	appID           = "mister-downloader"
 	appDisplayName  = "Mister 下载器"
-	appVersion      = "1.0.4"
+	appVersion      = "1.0.5"
 	upstreamVersion = "0.5.2"
 )
 
@@ -33,6 +33,7 @@ type App struct {
 	auth     *Auth
 	mgr      *Manager
 	upd      *Updater
+	self     *SelfUpdater
 	dataRoot string
 	appDir   string
 	web      fs.FS
@@ -80,12 +81,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("读取内置页面失败: %v", err)
 	}
-	a := &App{auth: auth, mgr: mgr, upd: NewUpdater(), dataRoot: dataRoot, appDir: appDir, web: sub}
+	a := &App{auth: auth, mgr: mgr, upd: NewUpdater(), self: NewSelfUpdater(dataRoot), dataRoot: dataRoot, appDir: appDir, web: sub}
+	a.self.Init()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	mgr.Start()
 	go mgr.Watchdog(ctx)
+	go a.resumeAfterUpdate(ctx)
 
 	handler := a.routes()
 	addr := os.Getenv("LISTEN_ADDR")
@@ -361,6 +364,10 @@ func (a *App) handleAPI(w http.ResponseWriter, r *http.Request) {
 		a.apiUsers(w, r)
 	case "/fnapi/update":
 		a.apiUpdate(w, r)
+	case "/fnapi/update/status":
+		a.apiUpdateStatus(w, r)
+	case "/fnapi/update/apply":
+		a.apiUpdateApply(w, r)
 	case "/fnapi/logs":
 		a.apiLogs(w, r)
 	case "/fnapi/restart":
@@ -385,6 +392,7 @@ func (a *App) apiMe(w http.ResponseWriter, r *http.Request) {
 		"version":        appVersion,
 		"upstream":       upstreamVersion,
 		"download_dir":   a.mgr.dirFn(),
+		"dir_history":    a.auth.DirHistory(),
 		"data_dir":       a.dataRoot,
 		"mdm_token":      a.mgr.Token(),
 		"gitee_repo":     giteeRepo,
@@ -843,6 +851,105 @@ func (a *App) apiUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	force := r.URL.Query().Get("force") == "1"
 	writeJSON(w, http.StatusOK, a.upd.Check(r.Context(), force))
+}
+
+// apiUpdateStatus 允许未登录访问：升级会重启服务并清空会话，界面需要继续读进度。
+func (a *App) apiUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		fail(w, http.StatusMethodNotAllowed, "方法不允许")
+		return
+	}
+	writeJSON(w, http.StatusOK, a.self.Status())
+}
+
+func (a *App) apiUpdateApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "方法不允许")
+		return
+	}
+	if _, ok := a.requireUser(w, r, true); !ok {
+		return
+	}
+	info := a.upd.Check(r.Context(), true)
+	if info.Error != "" {
+		fail(w, http.StatusBadGateway, info.Error)
+		return
+	}
+	if !info.HasUpdate {
+		fail(w, http.StatusBadRequest, "当前已是最新版本")
+		return
+	}
+	if info.Asset == "" {
+		fail(w, http.StatusBadRequest, "更新包里没有找到 .fpk 安装包，请前往 Gitee 手动下载")
+		return
+	}
+	a.captureRunningForUpdate()
+	if err := a.self.Apply(info, info.Latest); err != nil {
+		fail(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "target": info.Latest, "message": "已开始升级"})
+}
+
+// captureRunningForUpdate 记录正在下载的任务，升级重启后由新进程继续。
+func (a *App) captureRunningForUpdate() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	code, raw, err := a.mgr.Call(ctx, http.MethodGet, "/api/list", nil)
+	if err != nil || code != http.StatusOK {
+		return
+	}
+	var list struct {
+		Downloads []struct {
+			ID     uint64 `json:"id"`
+			Status string `json:"status"`
+		} `json:"downloads"`
+	}
+	if json.Unmarshal(raw, &list) != nil {
+		return
+	}
+	var ids []uint64
+	for _, d := range list.Downloads {
+		if d.Status == "Downloading" || d.Status == "Connecting" {
+			ids = append(ids, d.ID)
+		}
+	}
+	path := filepath.Join(a.dataRoot, "update_resume.json")
+	if len(ids) == 0 {
+		_ = os.Remove(path)
+		return
+	}
+	rawIDs, _ := json.Marshal(map[string]any{"ids": ids})
+	_ = os.WriteFile(path, rawIDs, 0600)
+	log.Printf("[update] 记录 %d 个运行中的任务，升级后继续", len(ids))
+}
+
+// resumeAfterUpdate 在升级重启后恢复之前运行中的任务。
+func (a *App) resumeAfterUpdate(ctx context.Context) {
+	path := filepath.Join(a.dataRoot, "update_resume.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	_ = os.Remove(path)
+	var in struct {
+		IDs []uint64 `json:"ids"`
+	}
+	if json.Unmarshal(raw, &in) != nil || len(in.IDs) == 0 {
+		return
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 150*time.Second)
+	defer cancel()
+	if err := a.mgr.WaitReady(runCtx); err != nil {
+		log.Printf("[update] 恢复任务失败：引擎未就绪: %v", err)
+		return
+	}
+	code, _, err := a.mgr.Call(runCtx, http.MethodPost, "/api/act", map[string]any{"action": "start", "ids": in.IDs})
+	if err != nil || code != http.StatusOK {
+		log.Printf("[update] 恢复 %d 个任务失败: code=%d err=%v", len(in.IDs), code, err)
+		return
+	}
+	log.Printf("[update] 已恢复 %d 个任务", len(in.IDs))
 }
 
 func (a *App) apiLogs(w http.ResponseWriter, r *http.Request) {

@@ -34,8 +34,9 @@ type User struct {
 }
 
 type Config struct {
-	Users       []User `json:"users"`
-	DownloadDir string `json:"download_dir"`
+	Users       []User   `json:"users"`
+	DownloadDir string   `json:"download_dir"`
+	DirHistory  []string `json:"dir_history,omitempty"`
 }
 
 type session struct {
@@ -104,7 +105,23 @@ func (a *Auth) SetDownloadDir(dir string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.cfg.DownloadDir = dir
+	hist := []string{dir}
+	for _, d := range a.cfg.DirHistory {
+		if d != "" && d != dir && len(hist) < 8 {
+			hist = append(hist, d)
+		}
+	}
+	a.cfg.DirHistory = hist
 	return a.saveLocked()
+}
+
+// DirHistory 返回最近使用过的下载目录（新到旧）。
+func (a *Auth) DirHistory() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]string, len(a.cfg.DirHistory))
+	copy(out, a.cfg.DirHistory)
+	return out
 }
 
 func randomHex(n int) string {
