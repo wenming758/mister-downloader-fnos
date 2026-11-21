@@ -1,0 +1,15 @@
+#!/bin/bash
+
+set -u
+
+APP_DIR="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-mister-downloader}/target}"
+DATA_DIR="${TRIM_PKGVAR:-/var/apps/${TRIM_APPNAME:-mister-downloader}/var}"
+LOG_DIR="$DATA_DIR/logs"
+export TRIM_APPDEST="$APP_DIR" TRIM_PKGVAR="$DATA_DIR" TRIM_APPNAME="${TRIM_APPNAME:-mister-downloader}"
+
+if [ -x "$APP_DIR/cmd/main" ]; then
+  "$APP_DIR/cmd/main" stop >/dev/null 2>&1 || true
+fi
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') [cmd/uninstall_callback] uninstalled; data kept in $DATA_DIR" >> "$LOG_DIR/server.log" 2>/dev/null || true
+exit 0

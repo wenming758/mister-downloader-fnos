@@ -1,0 +1,35 @@
+#!/bin/bash
+
+set -u
+
+APP_DIR="${TRIM_APPDEST:?missing TRIM_APPDEST}"
+DATA_DIR="${TRIM_PKGVAR:?missing TRIM_PKGVAR}"
+APP_NAME="${TRIM_APPNAME:-mister-downloader}"
+APP_ROOT="$(dirname "$APP_DIR")"
+LOG_DIR="$DATA_DIR/logs"
+
+mkdir -p "$DATA_DIR/run" "$LOG_DIR" "$DATA_DIR/mdm" "$DATA_DIR/downloads"
+
+for file in "$APP_DIR/mdm-fnos-server" "$APP_DIR/misterdownloadmanager" "$APP_DIR/misterdownloadmanager-cli"; do
+  if [ ! -f "$file" ]; then
+    echo "安装文件不完整：缺少 $(basename "$file")。" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+  fi
+  chmod 0755 "$file" 2>/dev/null || true
+done
+
+chmod 0700 "$DATA_DIR" "$DATA_DIR/mdm" 2>/dev/null || true
+chmod 0750 "$DATA_DIR/run" "$LOG_DIR" "$DATA_DIR/downloads" 2>/dev/null || true
+touch "$LOG_DIR/server.log" "$LOG_DIR/mdm.log" 2>/dev/null || true
+chmod 0640 "$LOG_DIR/server.log" "$LOG_DIR/mdm.log" 2>/dev/null || true
+
+if id -u "${TRIM_USERNAME:-mister_dl}" >/dev/null 2>&1; then
+  chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME:-$TRIM_USERNAME}" "$DATA_DIR" 2>/dev/null || true
+fi
+
+for script in "$APP_ROOT"/cmd/*; do
+  [ -f "$script" ] && chmod 0755 "$script" 2>/dev/null || true
+done
+
+echo "Mister 下载器安装完成。应用 ID：$APP_NAME"
+exit 0

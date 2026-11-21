@@ -1,0 +1,167 @@
+#!/bin/bash
+
+set -u
+umask 027
+
+APP_NAME="${TRIM_APPNAME:-mister-downloader}"
+APP_DIR="${TRIM_APPDEST:-/var/apps/$APP_NAME/target}"
+DATA_DIR="${TRIM_PKGVAR:-/var/apps/$APP_NAME/var}"
+LOG_DIR="$DATA_DIR/logs"
+RUN_DIR="$DATA_DIR/run"
+PID_FILE="$RUN_DIR/server.pid"
+SOCKET_PATH="$APP_DIR/app.sock"
+BIN="$APP_DIR/mdm-fnos-server"
+MDM_BIN="$APP_DIR/misterdownloadmanager"
+LOG_FILE="$LOG_DIR/server.log"
+HTTP_ADDR="127.0.0.1:8089"
+
+mkdir -p "$RUN_DIR" "$LOG_DIR" "$LOG_DIR" "$DATA_DIR/mdm" "$DATA_DIR/downloads" 2>/dev/null || true
+touch "$LOG_FILE" 2>/dev/null || true
+
+log_msg() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') [cmd/main] $1" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+user_error() {
+  echo "$1" > "${TRIM_TEMP_LOGFILE:-/dev/null}" 2>/dev/null || true
+}
+
+read_pid() {
+  [ -r "$1" ] || return 1
+  head -n 1 "$1" 2>/dev/null | tr -d '[:space:]'
+}
+
+process_alive() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$1" 2>/dev/null
+}
+
+server_running() {
+  local pid
+  pid="$(read_pid "$PID_FILE")" || return 1
+  process_alive "$pid" || return 1
+  [ -r "/proc/$pid/cmdline" ] || return 1
+  tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq -- "$BIN"
+}
+
+port_ready() {
+  (exec 3<>"/dev/tcp/127.0.0.1/8089") >/dev/null 2>&1 && exec 3>&- || return 1
+  return 0
+}
+
+cleanup_orphans() {
+  local pid cmdline
+  for pid in $(pgrep -f "$APP_DIR/misterdownloadmanager" 2>/dev/null); do
+    [ "$pid" = "$$" ] && continue
+    cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+    case "$cmdline" in
+      *"--headless"*)
+        log_msg "Stopping orphan download engine (pid=$pid)"
+        kill -TERM "$pid" 2>/dev/null || true
+        ;;
+    esac
+  done
+}
+
+start_app() {
+  if server_running; then
+    log_msg "Server already running (pid=$(read_pid "$PID_FILE"))"
+    return 0
+  fi
+
+  if [ ! -x "$BIN" ]; then
+    user_error "缺少应用主程序 mdm-fnos-server，请重新安装应用。"
+    log_msg "Missing $BIN"
+    return 1
+  fi
+  if [ ! -x "$MDM_BIN" ]; then
+    user_error "缺少下载引擎 misterdownloadmanager，请重新安装应用。"
+    log_msg "Missing $MDM_BIN"
+    return 1
+  fi
+
+  rm -f "$PID_FILE" "$SOCKET_PATH"
+  cleanup_orphans
+
+  if [ -f "$LOG_FILE" ]; then
+    size="$(stat -c '%s' "$LOG_FILE" 2>/dev/null || echo 0)"
+    case "$size" in
+      ''|*[!0-9]*) size=0 ;;
+    esac
+    if [ "$size" -ge 10485760 ]; then
+      mv -f "$LOG_FILE" "$LOG_FILE.1" 2>/dev/null || true
+      : > "$LOG_FILE"
+    fi
+  fi
+
+  export DATA_DIR APP_DIR APP_SOCKET="$SOCKET_PATH" LISTEN_ADDR="$HTTP_ADDR"
+  log_msg "Starting app server: $BIN"
+  if command -v nohup >/dev/null 2>&1; then
+    nohup "$BIN" >> "$LOG_FILE" 2>&1 &
+  else
+    "$BIN" >> "$LOG_FILE" 2>&1 &
+  fi
+  echo "$!" > "$PID_FILE"
+
+  count=0
+  while [ "$count" -lt 80 ]; do
+    if ! process_alive "$(read_pid "$PID_FILE")"; then
+      log_msg "Server exited during startup"
+      user_error "应用服务启动失败，请在应用数据目录 logs/server.log 查看详情。"
+      return 1
+    fi
+    if [ -S "$SOCKET_PATH" ] || port_ready; then
+      log_msg "Server ready (pid=$(cat "$PID_FILE" 2>/dev/null))"
+      return 0
+    fi
+    sleep 0.5
+    count=$((count + 1))
+  done
+
+  log_msg "Server started but gateway socket not detected yet"
+  return 0
+}
+
+stop_app() {
+  local pid count
+  if server_running; then
+    pid="$(read_pid "$PID_FILE")"
+    log_msg "Stopping server (pid=$pid)"
+    kill -TERM "$pid" 2>/dev/null || true
+    count=0
+    while process_alive "$pid" && [ "$count" -lt 80 ]; do
+      sleep 0.5
+      count=$((count + 1))
+    done
+    if process_alive "$pid"; then
+      log_msg "Server did not exit in time; sending KILL"
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$PID_FILE"
+  cleanup_orphans
+  rm -f "$SOCKET_PATH"
+  log_msg "Stopped"
+  return 0
+}
+
+case "${1:-}" in
+  start)
+    start_app
+    ;;
+  stop)
+    stop_app
+    ;;
+  status)
+    if server_running; then
+      exit 0
+    fi
+    exit 3
+    ;;
+  *)
+    user_error "未知的生命周期操作：${1:-空}"
+    exit 1
+    ;;
+esac

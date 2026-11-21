@@ -1,0 +1,21 @@
+# 构建产物与工具链
+build/
+tools/go/
+tools/go.zip
+tools/fnpack.exe
+/*.fpk
+
+# 上游源码与发行包（体积大，按 README 从上游 Release 获取）
+source/upstream/
+source/upstream-dist/
+
+# 中间打包目录
+fpk/mister-downloader.fpk
+fpk/src/app/mdm-fnos-server
+fpk/src/app/misterdownloadmanager
+fpk/src/app/misterdownloadmanager-cli
+fpk/src/app/licenses/upstream-source-0.5.2.tar.gz
+
+# 运行/测试临时文件
+*.exe
+*.log

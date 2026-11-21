@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Mister 下载器 · 飞牛 NAS</title>
+<link rel="icon" href="assets/icon.png">
+<link rel="apple-touch-icon" href="assets/icon.png">
+<style>
+  :root {
+    --ink: #23242b;
+    --paper: #fdf4e3;
+    --paper-2: #f6e7cf;
+    --card: #fffdf8;
+    --mint: #a9e8cf;
+    --mint-deep: #37a37c;
+    --peach: #ffd3b6;
+    --sky: #bfe3ff;
+    --rose: #ffb6b9;
+    --muted: #6d6a66;
+    --line: 3px solid var(--ink);
+    --radius: 22px;
+    --shadow: 6px 6px 0 var(--ink);
+    --shadow-sm: 3px 3px 0 var(--ink);
+    --ok: #2f9e6f;
+    --warn: #d9822b;
+    --bad: #d64545;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #ece6da;
+      --paper: #17181d;
+      --paper-2: #1f2128;
+      --card: #23252d;
+      --mint: #2e6b58;
+      --mint-deep: #7de0b6;
+      --peach: #6b4a33;
+      --sky: #2c4d68;
+      --rose: #6b3439;
+      --muted: #a8a49c;
+      --shadow: 6px 6px 0 #000;
+      --shadow-sm: 3px 3px 0 #000;
+      --ok: #6fe0a8;
+      --warn: #f0b35e;
+      --bad: #ff8b8b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", sans-serif;
+    background:
+      radial-gradient(1200px 600px at 10% -10%, var(--mint) 0%, transparent 60%),
+      radial-gradient(900px 500px at 110% 110%, var(--peach) 0%, transparent 55%),
+      var(--paper);
+    color: var(--ink);
+    -webkit-tap-highlight-color: transparent;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  .hidden { display: none !important; }
+
+  /* ---------- 登录 / 初始化 ---------- */
+  .gate {
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px 40px;
+  }
+  .gate-card {
+    width: min(440px, 100%);
+    background: var(--card);
+    border: var(--line);
+    border-radius: 30px;
+    box-shadow: var(--shadow);
+    padding: 30px 26px 24px;
+    position: relative;
+    animation: pop .35s ease-out;
+  }
+  @keyframes pop { from { transform: translateY(14px) scale(.97); opacity: 0; } to { transform: none; opacity: 1; } }
+  .brand { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+  .brand img {
+    width: 92px; height: 92px; border-radius: 26px;
+    border: var(--line); box-shadow: var(--shadow-sm);
+    background: #fff; padding: 6px;
+  }
+  .brand h1 { margin: 6px 0 0; font-size: 25px; letter-spacing: .5px; }
+  .brand p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+  .gate form { margin-top: 22px; display: flex; flex-direction: column; gap: 14px; }
+  label { font-size: 13px; font-weight: 700; color: var(--muted); display: block; margin-bottom: 6px; }
+  .field { position: relative; }
+  input[type=text], input[type=password] {
+    width: 100%;
+    padding: 13px 14px;
+    border: var(--line);
+    border-radius: 14px;
+    background: var(--paper);
+    outline: none;
+    font-size: 15px;
+  }
+  input[type=text]:focus, input[type=password]:focus { box-shadow: 0 0 0 4px color-mix(in srgb, var(--mint) 65%, transparent); }
+  .field .eye {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    border: none; background: transparent; padding: 8px; border-radius: 10px;
+    font-size: 13px; font-weight: 700; color: var(--muted);
+  }
+  .field .eye:hover { background: var(--paper-2); }
+  .btn {
+    border: var(--line);
+    border-radius: 14px;
+    padding: 12px 16px;
+    background: var(--card);
+    font-weight: 800;
+    box-shadow: var(--shadow-sm);
+    transition: transform .08s ease, box-shadow .08s ease;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ink); }
+  .btn.primary { background: var(--mint); }
+  .btn.ghost { background: transparent; box-shadow: none; border-width: 2px; padding: 8px 12px; font-weight: 700; }
+  .btn.danger { background: var(--rose); }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .gate .btn.primary { width: 100%; padding: 14px; font-size: 16px; }
+  .hint {
+    margin-top: 16px; font-size: 12.5px; color: var(--muted); line-height: 1.7;
+    background: color-mix(in srgb, var(--sky) 45%, transparent);
+    border: 2px dashed color-mix(in srgb, var(--ink) 45%, transparent);
+    border-radius: 14px; padding: 10px 12px;
+  }
+  .err { color: var(--bad); font-size: 13px; min-height: 18px; margin: 0; font-weight: 700; }
+  .gate-foot { text-align: center; color: var(--muted); font-size: 12px; margin-top: 18px; }
+  .gate-foot a { color: inherit; }
+
+  /* ---------- 主界面 ---------- */
+  .shell { height: 100%; display: none; flex-direction: column; }
+  .shell.show { display: flex; }
+  .topbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    background: color-mix(in srgb, var(--card) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: var(--line);
+    flex-wrap: nowrap;
+  }
+  .topbar .logo { width: 38px; height: 38px; border-radius: 12px; border: 2.5px solid var(--ink); background: #fff; padding: 2px; flex: none; }
+  .topbar .name { font-weight: 900; font-size: 16px; letter-spacing: .3px; white-space: nowrap; }
+  .topbar .name small { display: block; font-weight: 600; font-size: 11px; color: var(--muted); letter-spacing: 0; }
+  .status {
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 2px solid var(--ink); border-radius: 999px;
+    padding: 5px 12px; font-size: 12.5px; font-weight: 700;
+    background: var(--paper); white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); animation: pulse 2s infinite; }
+  .dot.bad { background: var(--bad); }
+  .dot.warn { background: var(--warn); }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--ok) 10%, transparent); } }
+  .topbar .spacer { flex: 1; }
+  .tbtn {
+    border: 2.5px solid var(--ink); border-radius: 12px; background: var(--card);
+    height: 38px; padding: 0 12px; font-size: 13px; font-weight: 800;
+    display: inline-flex; align-items: center; gap: 6px; position: relative;
+    box-shadow: 2px 2px 0 var(--ink);
+  }
+  .tbtn:active { transform: translate(2px, 2px); box-shadow: none; }
+  .tbtn svg { width: 16px; height: 16px; }
+  .tbtn .badge {
+    position: absolute; top: -7px; right: -7px; background: var(--bad); color: #fff;
+    border: 2px solid var(--ink); border-radius: 999px; font-size: 10px; padding: 0 5px; line-height: 15px;
+  }
+  .userchip { font-size: 12px; color: var(--muted); font-weight: 700; white-space: nowrap; }
+  .stage { flex: 1; position: relative; min-height: 0; }
+  #panel { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--paper); }
+  .loading {
+    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px;
+    align-items: center; justify-content: center; color: var(--muted); font-size: 14px;
+  }
+  .spinner {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: 4px solid color-mix(in srgb, var(--ink) 18%, transparent);
+    border-top-color: var(--mint-deep); animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- 弹窗 ---------- */
+  dialog {
+    border: var(--line); border-radius: 24px; padding: 0;
+    background: var(--card); color: var(--ink);
+    width: min(560px, calc(100vw - 28px));
+    max-height: min(82vh, 760px);
+    box-shadow: var(--shadow);
+  }
+  dialog::backdrop { background: rgba(20, 22, 28, .5); backdrop-filter: blur(2px); }
+  .dlg-head { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: var(--line); }
+  .dlg-head h3 { margin: 0; font-size: 17px; }
+  .dlg-head .x { margin-left: auto; }
+  .dlg-body { padding: 16px 18px 18px; overflow: auto; max-height: calc(82vh - 120px); }
+  .dlg-body p { line-height: 1.7; font-size: 13.5px; color: var(--muted); margin: 0 0 12px; }
+  .kv { display: grid; grid-template-columns: 96px 1fr; gap: 8px 12px; font-size: 13px; margin-bottom: 14px; }
+  .kv b { font-weight: 800; color: var(--muted); }
+  .kv span { word-break: break-all; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > .grow { flex: 1 1 220px; }
+  .list { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 14px; }
+  .userrow {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    border: 2px solid color-mix(in srgb, var(--ink) 55%, transparent); border-radius: 12px;
+  }
+  .userrow .role { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: var(--mint); border: 1.5px solid var(--ink); }
+  .userrow .role.op { background: var(--sky); }
+  .userrow .n { font-weight: 700; font-size: 13.5px; }
+  .userrow .del { margin-left: auto; }
+  .notes { white-space: pre-wrap; font-size: 13px; line-height: 1.65; background: var(--paper); border: 2px dashed color-mix(in srgb, var(--ink) 35%, transparent); border-radius: 12px; padding: 10px 12px; max-height: 220px; overflow: auto; }
+  .upd-banner { background: color-mix(in srgb, var(--mint) 55%, transparent); border: 2px solid var(--ink); border-radius: 14px; padding: 10px 12px; font-weight: 800; font-size: 13px; margin-bottom: 12px; }
+  .logs { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11.5px; white-space: pre-wrap; word-break: break-all; background: var(--paper-2); border-radius: 12px; padding: 10px; max-height: 300px; overflow: auto; }
+  .toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    background: var(--card); border: var(--line); border-radius: 14px;
+    padding: 10px 16px; font-size: 13px; font-weight: 800; box-shadow: var(--shadow-sm);
+    z-index: 99; max-width: calc(100vw - 32px);
+  }
+  .toast.bad { background: var(--rose); }
+
+  @media (max-width: 640px) {
+    .topbar { gap: 8px; padding: 8px 10px; }
+    .topbar .logo { width: 32px; height: 32px; border-radius: 10px; }
+    .topbar .name { font-size: 14px; }
+    .topbar .name small, .userchip { display: none; }
+    .status { font-size: 11.5px; padding: 4px 9px; max-width: 40vw; }
+    .tbtn { height: 34px; padding: 0 9px; font-size: 12px; }
+    .tbtn .label { display: none; }
+    .gate-card { padding: 24px 18px 20px; border-radius: 24px; }
+    .kv { grid-template-columns: 80px 1fr; }
+    .dlg-body { padding: 14px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <div class="brand">
+      <img src="assets/icon.png" alt="Mister 下载器">
+      <h1 id="gate-title">Mister 下载器</h1>
+      <p id="gate-sub">飞牛 NAS 原生下载器 · 多连接高速下载</p>
+    </div>
+
+    <form id="login-form" class="hidden" autocomplete="off">
+      <div>
+        <label for="login-name">用户名</label>
+        <input id="login-name" type="text" autocomplete="username" required>
+      </div>
+      <div>
+        <label for="login-pass">密码</label>
+        <div class="field">
+          <input id="login-pass" type="password" autocomplete="current-password" required>
+          <button class="eye" type="button" data-eye="login-pass" aria-label="显示或隐藏密码">显示</button>
+        </div>
+      </div>
+      <p class="err" id="login-err"></p>
+      <button class="btn primary" type="submit" id="login-btn">进入下载器</button>
+    </form>
+
+    <form id="init-form" class="hidden" autocomplete="off">
+      <div>
+        <label for="init-name">管理员用户名</label>
+        <input id="init-name" type="text" autocomplete="username" required maxlength="32">
+      </div>
+      <div>
+        <label for="init-pass">设置密码</label>
+        <div class="field">
+          <input id="init-pass" type="password" autocomplete="new-password" required>
+          <button class="eye" type="button" data-eye="init-pass" aria-label="显示或隐藏密码">显示</button>
+        </div>
+      </div>
+      <div>
+        <label for="init-pass2">确认密码</label>
+        <input id="init-pass2" type="password" autocomplete="new-password" required>
+      </div>
+      <p class="err" id="init-err"></p>
+      <button class="btn primary" type="submit" id="init-btn">创建并进入</button>
+    </form>
+
+    <div class="hint" id="gate-hint" hidden></div>
+    <div class="gate-foot">版本 <span id="gate-ver">1.0.0</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
+  </div>
+</div>
+
+<div class="shell" id="shell">
+  <div class="topbar">
+    <img class="logo" src="assets/icon.png" alt="">
+    <div class="name">Mister 下载器<small>飞牛 NAS · 多连接下载</small></div>
+    <span class="status" id="status" title="下载引擎状态"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></span>
+    <span class="spacer"></span>
+    <span class="userchip" id="userchip"></span>
+    <button class="tbtn" id="btn-update" title="检查更新">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+      <span class="label">更新</span><span class="badge hidden" id="upd-badge">1</span>
+    </button>
+    <button class="tbtn" id="btn-users" title="账户管理">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16 5.5a3 3 0 0 1 0 5.6M17.5 15c2 .5 3.2 2 3.5 4.5"/></svg>
+      <span class="label">账户</span>
+    </button>
+    <button class="tbtn" id="btn-settings" title="设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7"/></svg>
+      <span class="label">设置</span>
+    </button>
+    <button class="tbtn" id="btn-logout" title="退出登录">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 8l-4 4 4 4M6 12h9"/></svg>
+      <span class="label">退出</span>
+    </button>
+  </div>
+  <div class="stage">
+    <div class="loading" id="panel-loading"><div class="spinner"></div><div>正在启动下载引擎…</div></div>
+    <iframe id="panel" title="下载列表" hidden></iframe>
+  </div>
+</div>
+
+<dialog id="dlg-update">
+  <div class="dlg-head"><h3>检查更新</h3><button class="btn ghost x" data-close="dlg-update">关闭</button></div>
+  <div class="dlg-body">
+    <div id="upd-banner" class="upd-banner hidden"></div>
+    <div class="kv">
+      <b>当前版本</b><span id="upd-current"></span>
+      <b>最新版本</b><span id="upd-latest">—</span>
+      <b>更新源</b><span id="upd-source"></span>
+      <b>检查时间</b><span id="upd-time">—</span>
+    </div>
+    <div class="notes" id="upd-notes">尚未检查。</div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn primary" id="upd-recheck">立即检查</button>
+      <a class="btn" id="upd-open" href="#" target="_blank" rel="noopener">前往 Gitee 下载</a>
+      <a class="btn" id="upd-fpk" href="#" target="_blank" rel="noopener" hidden>直接下载安装包</a>
+    </div>
+    <p style="margin-top:12px">应用内更新检测固定使用 Gitee 发布页，国内访问更快。</p>
+  </div>
+</dialog>
+
+<dialog id="dlg-settings">
+  <div class="dlg-head"><h3>设置</h3><button class="btn ghost x" data-close="dlg-settings">关闭</button></div>
+  <div class="dlg-body">
+    <div>
+      <label for="set-dir">下载目录（服务器上的绝对路径）</label>
+      <input type="text" id="set-dir" placeholder="/vol1/1000/downloads">
+    </div>
+    <p style="margin-top:8px">默认存放在应用数据目录的 downloads 文件夹。改到共享文件夹时，请确保该目录对应用运行账户可写。</p>
+    <div class="row">
+      <button class="btn primary" id="set-save">保存并重启引擎</button>
+      <button class="btn" id="btn-restart">重启下载引擎</button>
+    </div>
+    <hr style="border:none;border-top:2px dashed color-mix(in srgb, var(--ink) 30%, transparent);margin:18px 0">
+    <div class="kv">
+      <b>数据目录</b><span id="set-data"></span>
+      <b>应用版本</b><span id="set-ver"></span>
+      <b>下载引擎</b><span id="set-up"></span>
+    </div>
+    <div class="row">
+      <button class="btn" id="btn-logs">查看服务日志</button>
+    </div>
+    <div class="logs hidden" id="log-box"></div>
+  </div>
+</dialog>
+
+<dialog id="dlg-users">
+  <div class="dlg-head"><h3>账户管理</h3><button class="btn ghost x" data-close="dlg-users">关闭</button></div>
+  <div class="dlg-body">
+    <div class="list" id="user-list"></div>
+    <div class="row">
+      <div class="grow">
+        <label for="u-name">用户名</label>
+        <input type="text" id="u-name" maxlength="32" autocomplete="off">
+      </div>
+      <div class="grow">
+        <label for="u-pass">密码（留空仅修改角色）</label>
+        <input type="password" id="u-pass" autocomplete="new-password">
+      </div>
+      <div style="flex:0 0 120px">
+        <label for="u-role">角色</label>
+        <select id="u-role" style="width:100%;padding:13px 10px;border:3px solid var(--ink);border-radius:14px;background:var(--paper)">
+          <option value="operator">运维员</option>
+          <option value="admin">管理员</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn primary" id="u-save">保存账户</button>
+    </div>
+    <p style="margin-top:12px">密码只要求非空，不限长度与字符组合。运维员可以使用下载功能，但不能管理账户和设置。</p>
+  </div>
+</dialog>
+
+<dialog id="dlg-about">
+  <div class="dlg-head"><h3>关于</h3><button class="btn ghost x" data-close="dlg-about">关闭</button></div>
+  <div class="dlg-body">
+    <div class="kv">
+      <b>应用</b><span>Mister 下载器（飞牛 fnOS 原生应用）</span>
+      <b>版本</b><span id="about-ver"></span>
+      <b>下载引擎</b><span>Mister Download Manager 0.5.2（headless）</span>
+      <b>许可证</b><span>GPL-3.0（上游 MDM），本适配层同源发布</span>
+      <b>上游项目</b><span><a href="https://github.com/anefzaoui/misterdownloadmanager" target="_blank" rel="noopener">github.com/anefzaoui/misterdownloadmanager</a></span>
+      <b>Gitee</b><span><a href="https://gitee.com/wenming760/mister-downloader-fnos" target="_blank" rel="noopener">gitee.com/wenming760/mister-downloader-fnos</a></span>
+    </div>
+    <p>本应用不是 MDM 官方发行版，由社区封装为飞牛原生应用；仅做服务包装、登录门禁与更新入口。</p>
+  </div>
+</dialog>
+
+<script>
+(function () {
+  'use strict';
+  var BASE = location.pathname;
+  if (!BASE.endsWith('/')) BASE = BASE.substring(0, BASE.lastIndexOf('/') + 1);
+  if (BASE === '') BASE = '/';
+
+  var state = { me: null, status: null, timer: null, token: '' };
+
+  function $(id) { return document.getElementById(id); }
+  function api(path, opts) {
+    opts = opts || {};
+    var init = {
+      method: opts.method || (opts.body ? 'POST' : 'GET'),
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'X-Requested-With': 'mdm-fnos' }
+    };
+    if (opts.body !== undefined) {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(opts.body);
+    }
+    return fetch(BASE + 'fnapi/' + path, init).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) {
+          var e = new Error(j.error || ('HTTP ' + r.status));
+          e.status = r.status; e.body = j; throw e;
+        }
+        return j;
+      });
+    });
+  }
+
+  var toastTimer = null;
+  function toast(text, bad) {
+    var t = document.querySelector('.toast');
+    if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
+    t.textContent = text;
+    t.classList.toggle('bad', !!bad);
+    t.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.add('hidden'); }, bad ? 6000 : 3200);
+  }
+
+  function showGate(mode, message) {
+    $('shell').classList.remove('show');
+    $('gate').style.display = 'flex';
+    $('login-form').classList.toggle('hidden', mode !== 'login');
+    $('init-form').classList.toggle('hidden', mode !== 'init');
+    $('gate-title').textContent = mode === 'init' ? '初始化 Mister 下载器' : 'Mister 下载器';
+    $('gate-sub').textContent = mode === 'init'
+      ? '首次使用：创建一个管理员账户'
+      : '飞牛 NAS 原生下载器 · 多连接高速下载';
+    var hint = $('gate-hint');
+    if (mode === 'init') {
+      hint.classList.remove('hidden');
+      hint.innerHTML = '首次初始化建议在飞牛应用中心以管理员身份打开。密码不限制长度和字符组合，非空即可。创建后可再添加运维员账户。';
+    } else {
+      hint.classList.add('hidden');
+    }
+    if (message) toast(message, true);
+  }
+
+  function showShell() {
+    $('gate').style.display = 'none';
+    $('shell').classList.add('show');
+    $('userchip').textContent = state.me.user.name + ' · ' + (state.me.user.role === 'admin' ? '管理员' : '运维员');
+    $('set-data').textContent = state.me.data_dir || '—';
+    $('set-ver').textContent = 'v' + (state.me.version || '');
+    $('set-up').textContent = 'MDM ' + (state.me.upstream || '');
+    $('set-dir').value = state.me.download_dir || '';
+    $('about-ver').textContent = 'v' + (state.me.version || '');
+    $('gate-ver').textContent = state.me.version || '';
+    $('gate-up').textContent = state.me.upstream || '';
+    $('btn-users').classList.toggle('hidden', state.me.user.role !== 'admin');
+    if (state.me.download_dir) sessionStorage.setItem('lastDir', state.me.download_dir);
+    syncToken(state.me.mdm_token || '');
+    if (state.token) loadFrame(false);
+    startPolling();
+    checkUpdate(false);
+  }
+
+  function syncToken(tok) {
+    if (tok === state.token) return;
+    state.token = tok;
+    try {
+      if (tok) localStorage.setItem('mdm-token', tok);
+      else localStorage.removeItem('mdm-token');
+    } catch (e) { /* 隐私模式下忽略 */ }
+  }
+
+  function loadFrame(force) {
+    var frame = $('panel');
+    if (frame.dataset.loaded && !force) return;
+    frame.dataset.loaded = '1';
+    frame.onload = function () {
+      frame.hidden = false;
+      $('panel-loading').classList.add('hidden');
+    };
+    frame.src = BASE + 'panel/' + (force ? '?_t=' + Date.now() : '');
+  }
+
+  function boot() {
+    api('me').then(function (me) {
+      state.me = me;
+      showShell();
+    }).catch(function (e) {
+      if (e.status === 401) {
+        showGate(e.body && e.body.initialized ? 'login' : 'init');
+      } else {
+        showGate('login', e.message);
+      }
+    });
+  }
+
+  function startPolling() {
+    stopPolling();
+    pollStatus();
+    state.timer = setInterval(pollStatus, 4000);
+  }
+  function stopPolling() {
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  }
+
+  function humanSpeed(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B/s';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB/s';
+    return (n / 1048576).toFixed(1) + ' MB/s';
+  }
+
+  function pollStatus() {
+    api('status').then(function (st) {
+      state.status = st;
+      var dot = $('status-dot'), text = $('status-text'), box = $('status');
+      dot.className = 'dot';
+      if (!st.running) {
+        dot.classList.add('bad'); text.textContent = '引擎未运行';
+        box.title = st.last_error || '下载引擎未运行';
+      } else if (!st.token_ok) {
+        dot.classList.add('warn'); text.textContent = '引擎启动中…';
+        box.title = st.last_error || '正在等待下载引擎就绪';
+      } else if (st.active > 0) {
+        dot.classList.add('ok');
+        text.textContent = '下载中 ' + (st.speed ? humanSpeed(st.speed) : '') + ' · ' + st.active + ' 个';
+      } else {
+        dot.classList.add('ok');
+        text.textContent = '空闲 · ' + st.downloads + ' 个任务';
+      }
+      if (st.mdm_token && st.mdm_token !== state.token) {
+        var had = !!state.token;
+        syncToken(st.mdm_token);
+        // 重新配对后刷新一次内嵌页面，让它使用新令牌。
+        if (had && $('panel').dataset.loaded) loadFrame(true);
+      }
+      if (st.token_ok && !$('panel').dataset.loaded) loadFrame(false);
+      if (st.token_ok && $('panel').hidden && $('panel').dataset.loaded) {
+        $('panel').hidden = false;
+        $('panel-loading').classList.add('hidden');
+      }
+    }).catch(function (e) {
+      if (e.status === 401) { stopPolling(); showGate('login', '登录已过期，请重新登录'); }
+    });
+  }
+
+  function checkUpdate(force) {
+    api('update' + (force ? '?force=1' : '')).then(function (u) {
+      $('upd-current').textContent = 'v' + u.current;
+      $('upd-latest').textContent = u.latest ? u.latest : '—';
+      $('upd-source').textContent = u.source;
+      $('upd-time').textContent = u.checked_at ? new Date(u.checked_at * 1000).toLocaleString() : '—';
+      $('upd-notes').textContent = u.error ? u.error : (u.notes || '（本次发布没有填写更新说明）');
+      $('upd-open').href = u.url || u.source;
+      var fpk = $('upd-fpk');
+      if (u.asset) { fpk.href = u.asset; fpk.hidden = false; } else { fpk.hidden = true; }
+      var banner = $('upd-banner');
+      if (u.has_update) {
+        banner.textContent = '发现新版本 ' + u.latest + '，建议升级。';
+        banner.classList.remove('hidden');
+        $('upd-badge').classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+        $('upd-badge').classList.add('hidden');
+      }
+      if (force) toast(u.error ? u.error : (u.has_update ? '发现新版本 ' + u.latest : '已是最新版本'), !!u.error);
+    }).catch(function (e) {
+      if (force) toast(e.message, true);
+    });
+  }
+
+  /* ---------------- 登录 / 初始化 ---------------- */
+  $('login-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var btn = $('login-btn');
+    $('login-err').textContent = '';
+    btn.disabled = true;
+    api('login', { body: { name: $('login-name').value.trim(), password: $('login-pass').value } })
+      .then(function () { return api('me'); })
+      .then(function (me) { state.me = me; $('login-pass').value = ''; showShell(); })
+      .catch(function (e) { $('login-err').textContent = e.message; })
+      .finally(function () { btn.disabled = false; });
+  });
+
+  $('init-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var btn = $('init-btn');
+    var name = $('init-name').value.trim();
+    var p1 = $('init-pass').value, p2 = $('init-pass2').value;
+    $('init-err').textContent = '';
+    if (p1 === '') { $('init-err').textContent = '密码不能为空'; return; }
+    if (p1 !== p2) { $('init-err').textContent = '两次输入的密码不一致'; return; }
+    btn.disabled = true;
+    api('init', { body: { name: name, password: p1 } })
+      .then(function () { return api('me'); })
+      .then(function (me) { state.me = me; showShell(); })
+      .catch(function (e) { $('init-err').textContent = e.message; })
+      .finally(function () { btn.disabled = false; });
+  });
+
+  document.querySelectorAll('[data-eye]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var input = $(b.dataset.eye);
+      var hide = input.type === 'password';
+      input.type = hide ? 'text' : 'password';
+      b.textContent = hide ? '隐藏' : '显示';
+    });
+  });
+
+  $('btn-logout').addEventListener('click', function () {
+    if (!confirm('确定退出登录吗？')) return;
+    api('logout', { body: {} }).finally(function () {
+      stopPolling();
+      syncToken('');
+      var f = $('panel');
+      f.removeAttribute('src');
+      f.dataset.loaded = '';
+      f.hidden = true;
+      $('panel-loading').classList.remove('hidden');
+      showGate('login');
+    });
+  });
+
+  /* ---------------- 弹窗控制 ---------------- */
+  document.querySelectorAll('[data-close]').forEach(function (b) {
+    b.addEventListener('click', function () { $(b.dataset.close).close(); });
+  });
+  ['dlg-update', 'dlg-settings', 'dlg-users', 'dlg-about'].forEach(function (id) {
+    var d = $(id);
+    d.addEventListener('click', function (ev) {
+      if (ev.target === d) d.close();
+    });
+  });
+
+  $('btn-update').addEventListener('click', function () {
+    checkUpdate(true);
+    $('dlg-update').showModal();
+  });
+  $('upd-recheck').addEventListener('click', function () { checkUpdate(true); });
+
+  $('btn-settings').addEventListener('click', function () {
+    $('set-dir').value = (state.me && state.me.download_dir) || '';
+    $('log-box').classList.add('hidden');
+    $('dlg-settings').showModal();
+  });
+
+  $('set-save').addEventListener('click', function () {
+    var dir = $('set-dir').value.trim();
+    if (!dir) { toast('请填写下载目录', true); return; }
+    var btn = $('set-save');
+    btn.disabled = true;
+    api('settings', { body: { download_dir: dir } }).then(function (r) {
+      toast(r.message || '已保存');
+      if (state.me) state.me.download_dir = r.download_dir;
+      $('dlg-settings').close();
+      var f = $('panel');
+      f.removeAttribute('src'); f.dataset.loaded = ''; f.hidden = true;
+      $('panel-loading').classList.remove('hidden');
+    }).catch(function (e) { toast(e.message, true); })
+      .finally(function () { btn.disabled = false; });
+  });
+
+  $('btn-restart').addEventListener('click', function () {
+    api('restart', { body: {} }).then(function (r) { toast(r.message || '正在重启'); })
+      .catch(function (e) { toast(e.message, true); });
+  });
+
+  $('btn-logs').addEventListener('click', function () {
+    var box = $('log-box');
+    box.classList.remove('hidden');
+    box.textContent = '读取中…';
+    api('logs').then(function (r) {
+      box.textContent = (r.log || '（空）') + '\n\n日志文件：' + r.path;
+    }).catch(function (e) { box.textContent = e.message; });
+  });
+
+  $('btn-users').addEventListener('click', function () {
+    openUsers();
+    $('dlg-users').showModal();
+  });
+
+  function openUsers() {
+    api('users').then(function (r) {
+      var box = $('user-list');
+      box.innerHTML = '';
+      r.users.forEach(function (u) {
+        var row = document.createElement('div');
+        row.className = 'userrow';
+        var n = document.createElement('span');
+        n.className = 'n'; n.textContent = u.name + (u.name === r.me ? '（当前）' : '');
+        var role = document.createElement('span');
+        role.className = 'role' + (u.role === 'admin' ? '' : ' op');
+        role.textContent = u.role === 'admin' ? '管理员' : '运维员';
+        row.appendChild(n); row.appendChild(role);
+        if (u.name !== r.me) {
+          var del = document.createElement('button');
+          del.className = 'btn ghost danger del';
+          del.textContent = '删除';
+          del.addEventListener('click', function () {
+            if (!confirm('删除账户 ' + u.name + '？')) return;
+            api('users?name=' + encodeURIComponent(u.name), { method: 'DELETE' })
+              .then(function () { toast('已删除'); openUsers(); })
+              .catch(function (e) { toast(e.message, true); });
+          });
+          row.appendChild(del);
+        }
+        box.appendChild(row);
+      });
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  $('u-save').addEventListener('click', function () {
+    var name = $('u-name').value.trim();
+    if (!name) { toast('请填写用户名', true); return; }
+    api('users', { body: { name: name, password: $('u-pass').value, role: $('u-role').value } })
+      .then(function () {
+        toast('已保存账户');
+        $('u-name').value = ''; $('u-pass').value = '';
+        openUsers();
+      })
+      .catch(function (e) { toast(e.message, true); });
+  });
+
+  // 关于：放在“更新”弹窗里通过 logo 长按？给一个入口：标题旁的小图标
+  var brand = document.querySelector('.topbar .name');
+  brand.style.cursor = 'pointer';
+  brand.title = '查看关于信息';
+  brand.addEventListener('click', function () { $('dlg-about').showModal(); });
+
+  window.addEventListener('pagehide', stopPolling);
+  boot();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+ddab84ae7ba31889eabc26041cb9245009c696fc5173862b22557bd947a51bfb *mister-downloader_1.0.0_x86.fpk
+bd3039f611e9550bce8a93eef0a3d165fead88546b689789f19f0b1897f50f1a *fpk/src/app/licenses/upstream-source-0.5.2.tar.gz
+3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986 *fpk/src/app/licenses/LICENSE

@@ -1,0 +1,22 @@
+appname                    = mister-downloader
+version                    = 1.0.0
+display_name               = Mister 下载器
+desc                       = 为飞牛 fnOS 打包的原生下载器，内置 Mister Download Manager 0.5.2 无界面引擎：多连接高速下载、断点续传、分类目录、队列与种子下载。应用带中文登录门禁（未登录完全隐藏内容）、管理员/运维员分级、下载目录设置与 Gitee 更新检测。仅支持 x86 设备，无需 Docker。
+source                     = thirdparty
+platform                   = x86
+
+maintainer                 = wenming758
+maintainer_url             = https://github.com/wenming758
+distributor                = wenming758
+distributor_url            = https://gitee.com/wenming760
+
+os_min_version             = 1.1.3100
+
+desktop_uidir              = ui
+desktop_applaunchname      = mister-downloader.main
+
+ctl_stop                   = true
+checkport                  = false
+disable_authorization_path = true
+
+changelog                  = 1.0.0：首个版本。内置 MDM 0.5.2 headless 下载引擎，支持多连接下载、断点续传、分类与队列；中文登录门禁与管理员/运维员分级；可在设置中修改下载目录；更新检测固定使用 Gitee 发布页。

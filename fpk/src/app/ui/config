@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "mister-downloader.main": {
+      "title": "Mister 下载器",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/mister-downloader",
+      "gatewaySocket": "app.sock",
+      "url": "/app/mister-downloader",
+      "allUsers": true
+    }
+  }
+}

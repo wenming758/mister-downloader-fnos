@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -u
+
+APP_DIR="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-mister-downloader}/target}"
+DATA_DIR="${TRIM_PKGVAR:-/var/apps/${TRIM_APPNAME:-mister-downloader}/var}"
+LOG_DIR="$DATA_DIR/logs"
+export TRIM_APPDEST="$APP_DIR" TRIM_PKGVAR="$DATA_DIR" TRIM_APPNAME="${TRIM_APPNAME:-mister-downloader}"
+
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+echo "$(date '+%Y-%m-%d %H:%M:%S') [cmd/uninstall_init] stopping service" >> "$LOG_DIR/server.log" 2>/dev/null || true
+
+if [ -x "$APP_DIR/cmd/main" ]; then
+  "$APP_DIR/cmd/main" stop >> "$LOG_DIR/server.log" 2>&1 || true
+fi
+
+exit 0

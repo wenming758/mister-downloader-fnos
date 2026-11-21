@@ -1,0 +1,26 @@
+#!/bin/bash
+
+set -u
+
+APP_DIR="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-mister-downloader}/target}"
+DATA_DIR="${TRIM_PKGVAR:-/var/apps/${TRIM_APPNAME:-mister-downloader}/var}"
+ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
+LOG_DIR="$DATA_DIR/logs"
+export TRIM_APPDEST="$APP_DIR" TRIM_PKGVAR="$DATA_DIR" TRIM_APPNAME="${TRIM_APPNAME:-mister-downloader}"
+
+case "$(echo "$ARCH" | tr '[:upper:]' '[:lower:]')" in
+  x86_64|amd64|x86) ;;
+  *)
+    echo "本应用仅支持 x86_64 架构的飞牛设备，当前架构：$ARCH。升级已终止。" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+    ;;
+esac
+
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+echo "$(date '+%Y-%m-%d %H:%M:%S') [cmd/upgrade_init] stopping before upgrade" >> "$LOG_DIR/server.log" 2>/dev/null || true
+
+if [ -x "$APP_DIR/cmd/main" ]; then
+  "$APP_DIR/cmd/main" stop >> "$LOG_DIR/server.log" 2>&1 || true
+fi
+
+exit 0

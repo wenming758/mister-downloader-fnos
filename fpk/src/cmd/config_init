@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -u
+
+APP_DIR="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-mister-downloader}/target}"
+DATA_DIR="${TRIM_PKGVAR:-/var/apps/${TRIM_APPNAME:-mister-downloader}/var}"
+LOG_DIR="$DATA_DIR/logs"
+
+mkdir -p "$DATA_DIR/run" "$LOG_DIR" "$DATA_DIR/mdm" "$DATA_DIR/downloads" 2>/dev/null || true
+
+if [ ! -w "$DATA_DIR" ]; then
+  echo "应用数据目录不可写：$DATA_DIR" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+  exit 1
+fi
+
+if [ ! -f "$APP_DIR/mdm-fnos-server" ]; then
+  echo "应用文件缺失，请重新安装应用。" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+  exit 1
+fi
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') [cmd/config_init] config requested" >> "$LOG_DIR/server.log" 2>/dev/null || true
+exit 0

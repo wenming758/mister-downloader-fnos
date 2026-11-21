@@ -1,0 +1,34 @@
+PASS 外层包含必需条目
+PASS cmd/config_init 存在且 0755
+PASS cmd/config_callback 存在且 0755
+PASS cmd/install_init 存在且 0755
+PASS cmd/install_callback 存在且 0755
+PASS cmd/upgrade_init 存在且 0755
+PASS cmd/upgrade_callback 存在且 0755
+PASS cmd/uninstall_init 存在且 0755
+PASS cmd/uninstall_callback 存在且 0755
+PASS cmd/main 存在且 0755
+PASS manifest 为 LF 换行
+PASS appname
+PASS version
+PASS platform=x86
+PASS desktop_uidir
+PASS applaunch
+PASS os_min_version
+PASS privilege username
+PASS checksum == app.tgz MD5
+PASS mdm-fnos-server 存在、非空、0755
+PASS mdm-fnos-server ELF64 x86-64
+PASS misterdownloadmanager 存在、非空、0755
+PASS misterdownloadmanager ELF64 x86-64
+PASS misterdownloadmanager-cli 存在、非空、0755
+PASS misterdownloadmanager-cli ELF64 x86-64
+PASS 应用图标
+PASS 应用配置
+PASS 许可证与上游源码
+PASS 网关入口
+PASS ICON.PNG 64x64
+PASS ICON_256.PNG 256x256
+
+RESULT: OK
+sha256: ddab84ae7ba31889eabc26041cb9245009c696fc5173862b22557bd947a51bfb size: 52343913

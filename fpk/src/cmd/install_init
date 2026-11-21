@@ -1,0 +1,12 @@
+#!/bin/bash
+# 仅打包 x86_64 可执行文件；飞牛将 x86 平台标识为 x86。
+arch="${TRIM_SYS_ARCH:-$(uname -m 2>/dev/null)}"
+case "$arch" in
+  x86|x86_64|amd64|x64)
+    ;;
+  *)
+    echo "Mister 下载器仅支持飞牛 fnOS x86（x86_64）设备，当前架构为 ${arch:-未知}。" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+    ;;
+esac
+exit 0

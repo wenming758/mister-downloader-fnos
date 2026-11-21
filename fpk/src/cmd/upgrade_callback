@@ -1,0 +1,35 @@
+#!/bin/bash
+
+set -u
+
+APP_DIR="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-mister-downloader}/target}"
+DATA_DIR="${TRIM_PKGVAR:-/var/apps/${TRIM_APPNAME:-mister-downloader}/var}"
+APP_ROOT="$(dirname "$APP_DIR")"
+LOG_DIR="$DATA_DIR/logs"
+export TRIM_APPDEST="$APP_DIR" TRIM_PKGVAR="$DATA_DIR" TRIM_APPNAME="${TRIM_APPNAME:-mister-downloader}"
+
+mkdir -p "$DATA_DIR/run" "$LOG_DIR" "$DATA_DIR/mdm" "$DATA_DIR/downloads" 2>/dev/null || true
+
+for file in "$APP_DIR/mdm-fnos-server" "$APP_DIR/misterdownloadmanager" "$APP_DIR/misterdownloadmanager-cli"; do
+  if [ ! -f "$file" ]; then
+    echo "升级文件不完整：缺少 $(basename "$file")。" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+  fi
+  chmod 0755 "$file" 2>/dev/null || true
+done
+
+for script in "$APP_ROOT"/cmd/*; do
+  [ -f "$script" ] && chmod 0755 "$script" 2>/dev/null || true
+done
+
+if id -u "${TRIM_USERNAME:-mister_dl}" >/dev/null 2>&1; then
+  chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME:-$TRIM_USERNAME}" "$DATA_DIR" 2>/dev/null || true
+fi
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') [cmd/upgrade_callback] files prepared, starting" >> "$LOG_DIR/server.log" 2>/dev/null || true
+
+if [ -x "$APP_DIR/cmd/main" ]; then
+  "$APP_DIR/cmd/main" start >> "$LOG_DIR/server.log" 2>&1 || true
+fi
+
+exit 0
