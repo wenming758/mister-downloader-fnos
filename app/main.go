@@ -21,7 +21,7 @@ import (
 const (
 	appID           = "mister-downloader"
 	appDisplayName  = "Mister 下载器"
-	appVersion      = "1.0.0"
+	appVersion      = "1.0.1"
 	upstreamVersion = "0.5.2"
 )
 
@@ -362,12 +362,6 @@ func (a *App) apiInit(w http.ResponseWriter, r *http.Request) {
 	if a.auth.Initialized() {
 		fail(w, http.StatusConflict, "应用已完成初始化")
 		return
-	}
-	if adminHeader, present := r.Header["X-Trim-Isadmin"]; present {
-		if len(adminHeader) == 0 || adminHeader[0] != "1" {
-			fail(w, http.StatusForbidden, "仅飞牛管理员可以完成首次初始化")
-			return
-		}
 	}
 	var in struct {
 		Name     string `json:"name"`
