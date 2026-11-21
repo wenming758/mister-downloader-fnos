@@ -287,23 +287,32 @@ func (a *Auth) DropSession(tok string) {
 }
 
 func (a *Auth) Session(r *http.Request) (session, bool) {
-	c, err := r.Cookie(sessionCookie)
-	if err != nil || c.Value == "" {
+	toks := make([]string, 0, 2)
+	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
+		toks = append(toks, c.Value)
+	}
+	if h := r.Header.Get("X-MDM-Session"); h != "" {
+		toks = append(toks, h)
+	}
+	if len(toks) == 0 {
 		return session{}, false
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	s, ok := a.sessions[c.Value]
-	if !ok {
-		return session{}, false
+	for _, tok := range toks {
+		s, ok := a.sessions[tok]
+		if !ok {
+			continue
+		}
+		if s.Exp < time.Now().Unix() {
+			delete(a.sessions, tok)
+			continue
+		}
+		s.Exp = time.Now().Add(sessionTTL).Unix()
+		a.sessions[tok] = s
+		return s, true
 	}
-	if s.Exp < time.Now().Unix() {
-		delete(a.sessions, c.Value)
-		return session{}, false
-	}
-	s.Exp = time.Now().Add(sessionTTL).Unix()
-	a.sessions[c.Value] = s
-	return s, true
+	return session{}, false
 }
 
 func (a *Auth) Allow(ip string) bool {

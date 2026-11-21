@@ -21,7 +21,7 @@ import (
 const (
 	appID           = "mister-downloader"
 	appDisplayName  = "Mister 下载器"
-	appVersion      = "1.0.1"
+	appVersion      = "1.0.2"
 	upstreamVersion = "0.5.2"
 )
 
@@ -338,11 +338,7 @@ func (a *App) apiMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
-	secure := r.TLS != nil ||
-		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") ||
-		r.Header.Get("X-Trim-Userid") != "" ||
-		r.Header.Get("X-Trim-Username") != "" ||
-		r.Header.Get("X-Trim-Isadmin") != ""
+	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    token,
@@ -389,7 +385,7 @@ func (a *App) apiInit(w http.ResponseWriter, r *http.Request) {
 	}
 	tok := a.auth.NewSession(in.Name, roleAdmin)
 	a.setSessionCookie(w, r, tok)
-	writeJSON(w, http.StatusOK, map[string]any{"user": map[string]string{"name": in.Name, "role": roleAdmin}})
+	writeJSON(w, http.StatusOK, map[string]any{"user": map[string]string{"name": in.Name, "role": roleAdmin}, "session": tok})
 }
 
 func (a *App) apiLogin(w http.ResponseWriter, r *http.Request) {
@@ -415,12 +411,15 @@ func (a *App) apiLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	tok := a.auth.NewSession(u.Name, u.Role)
 	a.setSessionCookie(w, r, tok)
-	writeJSON(w, http.StatusOK, map[string]any{"user": map[string]string{"name": u.Name, "role": u.Role}})
+	writeJSON(w, http.StatusOK, map[string]any{"user": map[string]string{"name": u.Name, "role": u.Role}, "session": tok})
 }
 
 func (a *App) apiLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		a.auth.DropSession(c.Value)
+	}
+	if h := r.Header.Get("X-MDM-Session"); h != "" {
+		a.auth.DropSession(h)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1,

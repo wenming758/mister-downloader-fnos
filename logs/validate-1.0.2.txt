@@ -1,0 +1,33 @@
+PASS 外层包含必需条目
+PASS cmd/config_init 存在且 0755
+PASS cmd/config_callback 存在且 0755
+PASS cmd/install_init 存在且 0755
+PASS cmd/install_callback 存在且 0755
+PASS cmd/upgrade_init 存在且 0755
+PASS cmd/upgrade_callback 存在且 0755
+PASS cmd/uninstall_init 存在且 0755
+PASS cmd/uninstall_callback 存在且 0755
+PASS cmd/main 存在且 0755
+PASS manifest 为 LF 换行
+PASS appname
+PASS version=1.0.2
+PASS platform=x86
+PASS applaunch
+PASS privilege username
+PASS checksum == app.tgz MD5
+PASS mdm-fnos-server 存在、非空、0755
+PASS mdm-fnos-server ELF64 x86-64
+PASS misterdownloadmanager 存在、非空、0755
+PASS misterdownloadmanager ELF64 x86-64
+PASS misterdownloadmanager-cli 存在、非空、0755
+PASS misterdownloadmanager-cli ELF64 x86-64
+PASS 会话请求头兜底已内置
+PASS 无管理员初始化限制
+PASS 应用图标
+PASS 许可证与上游源码
+PASS 网关入口
+PASS ICON.PNG 64x64
+PASS ICON_256.PNG 256x256
+
+RESULT: OK
+sha256: 3f8e4cd4a5341190e3db83ff1abff0da517d6ff75edde6b6dc1f596ff863cef3 size: 52346126

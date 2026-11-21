@@ -287,7 +287,7 @@
     </form>
 
     <div class="hint" id="gate-hint" hidden></div>
-    <div class="gate-foot">版本 <span id="gate-ver">1.0.1</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
+    <div class="gate-foot">版本 <span id="gate-ver">1.0.2</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
   </div>
 </div>
 
@@ -419,6 +419,15 @@
   var state = { me: null, status: null, timer: null, token: '' };
 
   function $(id) { return document.getElementById(id); }
+  function getSession() {
+    try { return localStorage.getItem('mdm-session') || ''; } catch (e) { return ''; }
+  }
+  function setSession(tok) {
+    try {
+      if (tok) localStorage.setItem('mdm-session', tok);
+      else localStorage.removeItem('mdm-session');
+    } catch (e) { /* 隐私模式下忽略 */ }
+  }
   function api(path, opts) {
     opts = opts || {};
     var init = {
@@ -427,6 +436,8 @@
       cache: 'no-store',
       headers: { 'X-Requested-With': 'mdm-fnos' }
     };
+    var sess = getSession();
+    if (sess) init.headers['X-MDM-Session'] = sess;
     if (opts.body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(opts.body);
@@ -517,6 +528,7 @@
       showShell();
     }).catch(function (e) {
       if (e.status === 401) {
+        setSession('');
         showGate(e.body && e.body.initialized ? 'login' : 'init');
       } else {
         showGate('login', e.message);
@@ -606,7 +618,7 @@
     $('login-err').textContent = '';
     btn.disabled = true;
     api('login', { body: { name: $('login-name').value.trim(), password: $('login-pass').value } })
-      .then(function () { return api('me'); })
+      .then(function (r) { setSession(r.session || ''); return api('me'); })
       .then(function (me) { state.me = me; $('login-pass').value = ''; showShell(); })
       .catch(function (e) { $('login-err').textContent = e.message; })
       .finally(function () { btn.disabled = false; });
@@ -622,9 +634,17 @@
     if (p1 !== p2) { $('init-err').textContent = '两次输入的密码不一致'; return; }
     btn.disabled = true;
     api('init', { body: { name: name, password: p1 } })
-      .then(function () { return api('me'); })
+      .then(function (r) { setSession(r.session || ''); return api('me'); })
       .then(function (me) { state.me = me; showShell(); })
-      .catch(function (e) { $('init-err').textContent = e.message; })
+      .catch(function (e) {
+        if (e.status === 409) {
+          showGate('login', '应用已完成初始化，请直接登录');
+          $('login-name').value = name;
+          $('login-pass').focus();
+          return;
+        }
+        $('init-err').textContent = e.message;
+      })
       .finally(function () { btn.disabled = false; });
   });
 
@@ -642,6 +662,7 @@
     api('logout', { body: {} }).finally(function () {
       stopPolling();
       syncToken('');
+      setSession('');
       var f = $('panel');
       f.removeAttribute('src');
       f.dataset.loaded = '';
