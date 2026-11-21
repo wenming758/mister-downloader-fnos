@@ -10,7 +10,7 @@
 
 | 路径 | 说明 |
 | --- | --- |
-| `mister-downloader_1.0.6_x86.fpk` | 可直接安装的飞牛应用包（x86） |
+| `mister-downloader_1.0.7_x86.fpk` | 可直接安装的飞牛应用包（x86） |
 | `SHA256SUMS.txt` | 安装包与许可证文件的 SHA-256 |
 | `fpk/src/` | FPK 构建目录（manifest、生命周期脚本、网关入口、图标） |
 | `app/` | Go 适配层源码（登录/角色、下载引擎守护、网关反代、更新检测） |
@@ -22,7 +22,7 @@
 
 ## 安装
 
-1. 打开飞牛 fnOS 应用中心 → 手动安装，选择 `mister-downloader_1.0.6_x86.fpk`。
+1. 打开飞牛 fnOS 应用中心 → 手动安装，选择 `mister-downloader_1.0.7_x86.fpk`。
 2. 安装完成后，在桌面打开“Mister 下载器”（任意能打开应用的飞牛用户均可）。
 3. 首次打开会要求创建**应用管理员**（与飞牛系统账户相互独立），不限制飞牛账户身份。
 4. 登录后进入应用自带的**优化版**下载面板：粘贴直链或磁力链接即可下载；顶部按钮可切换到上游的**原生版** MDM 页面。未登录时整个应用仅显示登录框，不暴露任何下载内容或接口。
@@ -33,8 +33,9 @@
 ### 磁力链接
 
 - 添加磁力后会立即出现一张“获取种子”卡片，显示已经等待的秒数和当前阶段；拿到文件列表后卡片会自动变成正常任务。
-- 如果链接里没有 tracker，应用会自动补上一组公开 tracker；等待 6 秒仍没有结果时，还会通过公开种子缓存（itorrents）直接取回 `.torrent` 并加入任务，不依赖 DHT。
+- 从磁力取回的种子会保留磁力自带的 `tr`，并补齐一组共 14 个公开 tracker（HTTP/HTTPS 优先，兼顾国内网络）；经公开种子缓存（itorrents）兜底取回的 `.torrent` 也会写入同一组 tracker，不再出现“任务建好了但只能靠 DHT、永远 0 速度”的情况。
 - 3 分钟内仍失败时，卡片会变成“获取失败”并说明原因，可直接“重试”或“移除”，不会再出现“添加后毫无反应”的情况。
+- 任务已运行超过 2 分钟仍然没有任何数据时，卡片会提示“该资源可能只有迅雷等私有节点在供源”：这类中文资源对标准 BT 客户端基本不供速，属资源本身限制，换资源或改用直链即可。
 - 公开缓存只提供种子元数据，实际下载仍由你的设备完成。
 
 ### 账户与密码
@@ -92,8 +93,8 @@ chmod 0755 ../fpk/src/app/{mdm-fnos-server,misterdownloadmanager,misterdownloadm
 cd ../fpk
 fnpack build -d src
 cd ..
-python tools/patch-fpk.py fpk/mister-downloader.fpk mister-downloader_1.0.6_x86.fpk
-sha256sum mister-downloader_1.0.6_x86.fpk
+python tools/patch-fpk.py fpk/mister-downloader.fpk mister-downloader_1.0.7_x86.fpk
+sha256sum mister-downloader_1.0.7_x86.fpk
 ```
 
 上游 Linux 发行包获取：<https://github.com/anefzaoui/misterdownloadmanager/releases/tag/v0.5.2>（文件 `MisterDownloadManager-0.5.2-linux-x86_64.tar.gz`）。
@@ -108,7 +109,8 @@ Windows 下 `fnpack` 会把文件写成 `0666` 且不会更新 `checksum`，因�
 - 1.0.6 磁力修复已实测：用户给出的磁力 `magnet:?xt=urn:btih:ae31be061ab6c298e785adfb92c3932c34a54013` 添加后先显示等待卡片，约 10 秒内经公开缓存取得文件列表并出现在任务列表（本机 DHT 被网络阻断时也能完成）；无 tracker 的磁力会自动补齐 8 个公开 tracker；无效磁力立即报错；无法解析的哈希在超时后显示“获取失败”并提供重试/移除；重试会重新进入等待状态。
 - 1.0.6 更新页已实测：按钮始终可见，无更新时显示“已是最新版本”并禁用；运维员账户也能进入升级流程（无更新时返回“当前已是最新版本”，不再返回权限错误）。
 - FPK 已用 `fnpack` 1.2.3 构建并校验：`platform=x86`、`checksum` 等于实际 `app.tgz` 的 MD5、`cmd/*` 与三个二进制均为 `0755`、全部 ELF 为 x86-64。
-- **尚未在真实飞牛设备上安装 1.0.6 验证**，应用内升级的 `appcenter-cli install-fpk` 环节需在设备上实测。若原生面板仍提示引擎未就绪，请提供应用数据目录下 `logs/server.log`（已包含面板请求与引擎配对记录）。
+- 1.0.7 无速度修复已实测：`magnet:?xt=urn:btih:292e1a6a…` 与 `ae31be06…` 添加后经公开缓存取得文件列表，保存的 `.torrent` 已包含磁力自带 tracker 与 14 个公开 tracker（此前缓存种子没有任何 announce，引擎只能走被网络阻断的 DHT）；用户给出的中文资源在 rqbit 与 libtorrent 上均只得到接近 0 的速率，而同网络下 Debian 镜像可达 17–22MB/s，确认是该资源仅由迅雷节点供源，界面已加入 2 分钟零数据提示。
+- **尚未在真实飞牛设备上安装 1.0.7 验证**，应用内升级的 `appcenter-cli install-fpk` 环节需在设备上实测。若原生面板仍提示引擎未就绪，请提供应用数据目录下 `logs/server.log`（已包含面板请求与引擎配对记录）。
 
 ## 许可与署名
 

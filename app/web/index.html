@@ -232,6 +232,7 @@
   .meta { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); font-weight: 600; }
   .meta b { color: var(--ink); font-weight: 800; }
   .meta .errtext { color: var(--bad); }
+  .hint { font-size: 12px; line-height: 1.7; color: #9a5a00; background: #fff6dd; border: 2px dashed #e2b34d; border-radius: 12px; padding: 8px 10px; }
   .acts { display: flex; gap: 8px; flex-wrap: wrap; }
   .acts .btn { padding: 6px 12px; font-size: 12.5px; border-width: 2px; border-radius: 11px; box-shadow: 2px 2px 0 var(--ink); }
   .empty { text-align: center; color: var(--muted); padding: 48px 12px; font-size: 13.5px; line-height: 1.9; }
@@ -369,7 +370,7 @@
     </form>
 
     <div class="hint" id="gate-hint" hidden></div>
-    <div class="gate-foot">版本 <span id="gate-ver">1.0.6</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
+    <div class="gate-foot">版本 <span id="gate-ver">1.0.7</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
   </div>
 </div>
 
@@ -559,7 +560,7 @@
   if (!BASE.endsWith('/')) BASE = BASE.substring(0, BASE.lastIndexOf('/') + 1);
   if (BASE === '') BASE = '/';
 
-  var state = { me: null, status: null, timer: null, token: '', view: 'native', tasksTimer: null, tasksBusy: false, tasks: null, pendingErrSeen: {} };
+  var state = { me: null, status: null, timer: null, token: '', view: 'native', tasksTimer: null, tasksBusy: false, tasks: null, pendingErrSeen: {}, stallSeen: {} };
 
   function $(id) { return document.getElementById(id); }
   function getSession() {
@@ -990,6 +991,11 @@
     card.errBox.appendChild(card.errText);
     card.el.appendChild(card.errBox);
 
+    card.hint = document.createElement('div');
+    card.hint.className = 'hint hidden';
+    card.hint.textContent = '已运行较长时间但仍没有数据：该资源可能只有迅雷等私有节点在供源，标准 BT 客户端通常拿不到速度。可以换一个资源，或改用带直链的下载地址。';
+    card.el.appendChild(card.hint);
+
     card.acts = document.createElement('div');
     card.acts.className = 'acts';
     var getTask = function () { return card.task; };
@@ -1031,6 +1037,15 @@
 
     card.errBox.classList.toggle('hidden', !t.error);
     card.errText.textContent = t.error || '';
+
+    var stalled = false;
+    if (running && done === 0 && !(Number(t.speed) > 0)) {
+      if (!state.stallSeen[t.id]) state.stallSeen[t.id] = Date.now();
+      stalled = Date.now() - state.stallSeen[t.id] > 120000;
+    } else {
+      delete state.stallSeen[t.id];
+    }
+    card.hint.classList.toggle('hidden', !stalled);
 
     card.btnPause.hidden = !running;
     card.btnStart.hidden = !(t.status === 'Stopped' || t.status === 'Error');

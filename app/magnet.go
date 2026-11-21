@@ -30,16 +30,23 @@ const (
 )
 
 // 公开 tracker：很多中文站点给出的磁力只有 xt 和 dn，没有 tracker；
-// 补上这些能明显提高获取文件列表的成功率。
+// 补上这些能明显提高获取文件列表与 peer 的成功率。
+// HTTP(S) 入口优先（国内网络常封 UDP），并保留几个常用的 UDP 入口。
 var publicTrackers = []string{
+	"https://004430.xyz:443/announce",
+	"http://tracker.dler.com:6969/announce",
+	"http://bt1.archive.org:6969/announce",
+	"http://bt2.archive.org:6969/announce",
+	"http://1337.abcvg.info:80/announce",
+	"https://1337.abcvg.info:443/announce",
+	"https://tracker.nekomi.cn:443/announce",
+	"http://tracker.renfei.net:8080/announce",
+	"http://tracker.dhitechnical.com:6969/announce",
+	"https://tracker.7471.top:443/announce",
 	"udp://tracker.opentrackr.org:1337/announce",
 	"udp://open.stealth.si:80/announce",
 	"udp://tracker.torrent.eu.org:451/announce",
 	"udp://exodus.desync.com:6969/announce",
-	"udp://open.demonii.com:1337/announce",
-	"udp://tracker.dler.org:6969/announce",
-	"http://tracker.opentrackr.org:1337/announce",
-	"https://tracker.tamersunion.org:443/announce",
 }
 
 var metaClient = &http.Client{
@@ -100,6 +107,21 @@ func magnetInfoHash(m string) (string, error) {
 	default:
 		return "", fmt.Errorf("磁力链接的 btih 长度不正确")
 	}
+}
+
+// magnetTrackers 取磁力链接里的 tr 列表（已解码，保持原顺序）。
+func magnetTrackers(m string) []string {
+	u, err := url.Parse(strings.TrimSpace(m))
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(publicTrackers)+2)
+	for _, t := range u.Query()["tr"] {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func magnetName(m string) string {
@@ -253,11 +275,12 @@ func (a *App) watchMagnet(hash string, rec *PendingMagnet) {
 		if !cacheTried && el >= magnetCacheDelay {
 			cacheTried = true
 			a.pendingSetStage(hash, rec, "cache", "正在通过公开种子缓存获取文件列表…")
-			if err := a.addFromCache(context.Background(), hash); err != nil {
+			trackers := magnetTrackers(rec.Magnet)
+			if err := a.addFromCache(context.Background(), hash, trackers); err != nil {
 				log.Printf("[magnet] %s 缓存回退失败: %v", shortHash(hash), err)
 				a.pendingSetStage(hash, rec, "lookup", "正在等待对等方提供文件列表…")
 			} else {
-				log.Printf("[magnet] %s 已从公开缓存取得文件列表", shortHash(hash))
+				log.Printf("[magnet] %s 已从公开缓存取得文件列表（%d 个 tracker）", shortHash(hash), len(trackers))
 				a.pendingSetStage(hash, rec, "added", "已取得文件列表，正在加入任务…")
 				settleUntil = time.Now().Add(magnetSettle)
 			}
@@ -303,7 +326,9 @@ func (a *App) taskHasHash(hash string) bool {
 }
 
 // addFromCache 从公开的种子缓存取回 .torrent 并交给引擎；这一步不依赖 DHT 或对等方。
-func (a *App) addFromCache(ctx context.Context, hash string) error {
+// 缓存里的种子通常没有任何 tracker（来自 DHT 元数据），必须把磁力自带的 tr 与公开 tracker
+// 写进 announce/announce-list，否则任务只能靠 DHT 找 peer，在飞牛上会一直 0 速度。
+func (a *App) addFromCache(ctx context.Context, hash string, trackers []string) error {
 	body, err := a.fetchCachedTorrent(ctx, hash)
 	if err != nil {
 		return err
@@ -315,9 +340,17 @@ func (a *App) addFromCache(ctx context.Context, hash string) error {
 	if !strings.EqualFold(got, hash) {
 		return fmt.Errorf("缓存中的种子与磁力哈希不一致")
 	}
+	with, err := torrentWithTrackers(body, trackers)
+	if err != nil {
+		return err
+	}
+	again, err := torrentInfoHash(with)
+	if err != nil || !strings.EqualFold(again, hash) {
+		return fmt.Errorf("写入 tracker 后种子校验失败")
+	}
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	code, raw, err := a.mgr.CallRaw(cctx, http.MethodPost, "/api/torrent?start=true", "application/x-bittorrent", body)
+	code, raw, err := a.mgr.CallRaw(cctx, http.MethodPost, "/api/torrent?start=true", "application/x-bittorrent", with)
 	if err != nil {
 		return err
 	}
@@ -539,4 +572,161 @@ func torrentInfoHash(body []byte) (string, error) {
 	}
 	sum := sha1.Sum(info.raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+/* ---------------- 给缓存种子补 tracker ---------------- */
+
+type bentry struct {
+	key []byte // 已含长度前缀，可直接拼回 bencode
+	raw []byte
+}
+
+func bencString(s string) []byte {
+	return append([]byte(strconv.Itoa(len(s))+":"), s...)
+}
+
+func bencStringValue(raw []byte) (string, bool) {
+	colon := bytes.IndexByte(raw, ':')
+	if colon <= 0 {
+		return "", false
+	}
+	n, err := strconv.Atoi(string(raw[:colon]))
+	if err != nil || n < 0 || colon+1+n != len(raw) {
+		return "", false
+	}
+	return string(raw[colon+1:]), true
+}
+
+// btopLevel 拆出顶层字典的每个键值对，值是原始 bencode 字节（info 段因此保持不变）。
+func btopLevel(b []byte) ([]bentry, error) {
+	if len(b) == 0 || b[0] != 'd' {
+		return nil, fmt.Errorf("不是种子文件")
+	}
+	var out []bentry
+	i := 1
+	for {
+		if i >= len(b) {
+			return nil, fmt.Errorf("种子文件不完整")
+		}
+		if b[i] == 'e' {
+			i++
+			break
+		}
+		k, nk, err := bvalue(b, i, 0)
+		if err != nil {
+			return nil, err
+		}
+		if len(k.raw) == 0 || k.raw[0] < '0' || k.raw[0] > '9' {
+			return nil, fmt.Errorf("种子的键不是字符串")
+		}
+		v, nv, err := bvalue(b, nk, 0)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, bentry{key: k.raw, raw: v.raw})
+		i = nv
+	}
+	if i != len(b) {
+		return nil, fmt.Errorf("种子文件末尾有多余内容")
+	}
+	return out, nil
+}
+
+func bListStrings(raw []byte) []string {
+	if len(raw) == 0 || raw[0] != 'l' {
+		return nil
+	}
+	var out []string
+	for i := 1; i < len(raw) && raw[i] != 'e'; {
+		v, nv, err := bvalue(raw, i, 0)
+		if err != nil {
+			return out
+		}
+		if len(v.raw) > 0 && v.raw[0] == 'l' {
+			out = append(out, bListStrings(v.raw)...)
+		} else if s, ok := bencStringValue(v.raw); ok {
+			out = append(out, s)
+		}
+		i = nv
+	}
+	return out
+}
+
+func torrentTrackers(entries []bentry) []string {
+	var out []string
+	seen := make(map[string]bool)
+	add := func(s string) {
+		if s = strings.TrimSpace(s); s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	for _, e := range entries {
+		k, ok := bencStringValue(e.key)
+		if !ok {
+			continue
+		}
+		switch k {
+		case "announce":
+			if s, ok := bencStringValue(e.raw); ok {
+				add(s)
+			}
+		case "announce-list":
+			for _, s := range bListStrings(e.raw) {
+				add(s)
+			}
+		}
+	}
+	return out
+}
+
+// torrentWithTrackers 把 extra 里缺少的 tracker 写进 announce/announce-list。
+// info 段保持原始字节，info hash 不变（返回前由调用方再校验一次）。
+func torrentWithTrackers(body []byte, extra []string) ([]byte, error) {
+	entries, err := btopLevel(body)
+	if err != nil {
+		return nil, err
+	}
+	all := torrentTrackers(entries)
+	seen := make(map[string]bool, len(all))
+	for _, t := range all {
+		seen[t] = true
+	}
+	changed := false
+	for _, t := range extra {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] || len(t) > 2048 {
+			continue
+		}
+		seen[t] = true
+		all = append(all, t)
+		changed = true
+	}
+	if len(all) == 0 || !changed {
+		return body, nil
+	}
+	out := make([]bentry, 0, len(entries)+1)
+	for _, e := range entries {
+		if k, ok := bencStringValue(e.key); ok && (k == "announce" || k == "announce-list") {
+			continue
+		}
+		out = append(out, e)
+	}
+	out = append(out, bentry{key: bencString("announce"), raw: bencString(all[0])})
+	list := []byte{'l'}
+	for _, t := range all {
+		list = append(list, 'l')
+		list = append(list, bencString(t)...)
+		list = append(list, 'e')
+	}
+	list = append(list, 'e')
+	out = append(out, bentry{key: bencString("announce-list"), raw: list})
+	sort.Slice(out, func(i, j int) bool { return bytes.Compare(out[i].key, out[j].key) < 0 })
+	buf := []byte{'d'}
+	for _, e := range out {
+		buf = append(buf, e.key...)
+		buf = append(buf, e.raw...)
+	}
+	buf = append(buf, 'e')
+	return buf, nil
 }

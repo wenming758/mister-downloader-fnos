@@ -104,6 +104,9 @@ def main():
                 check("获取种子".encode("utf-8") in blob and "获取失败".encode("utf-8") in blob,
                       "磁力等待/失败提示")
                 check(b"pending/dismiss" in blob and b"pending/retry" in blob, "磁力任务重试与移除")
+                check(b"torrentWithTrackers" in blob and b"tracker.dler.com" in blob
+                      and b"004430.xyz" in blob, "缓存种子写入磁力与公开 tracker")
+                check("迅雷等私有节点".encode("utf-8") in blob, "长时间零速度提示")
         check(fields.get("maintainer") == "Ahmed Nefzaoui", "开发者 = 上游原作者")
         check(fields.get("maintainer_url") == "https://github.com/anefzaoui", "开发者链接")
         check(fields.get("distributor") == "wenming758", "发布者 = wenming758")

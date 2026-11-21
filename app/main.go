@@ -22,7 +22,7 @@ import (
 const (
 	appID           = "mister-downloader"
 	appDisplayName  = "Mister 下载器"
-	appVersion      = "1.0.6"
+	appVersion      = "1.0.7"
 	upstreamVersion = "0.5.2"
 )
 
