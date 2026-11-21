@@ -78,6 +78,22 @@ func (s *SelfUpdater) Init() {
 	if st.State == "" {
 		st.State = "idle"
 	}
+	errFile := filepath.Join(s.dir, "install_error.txt")
+	detail := ""
+	if raw, err := os.ReadFile(errFile); err == nil {
+		detail = strings.TrimSpace(string(raw))
+		if r := []rune(detail); len(r) > 900 {
+			detail = string(r[:900]) + "…"
+		}
+	}
+	_ = os.Remove(errFile)
+	// 版本已经是目标版本：无论上次停在哪一步，都按升级成功处理。
+	if target != "" && sameVersion(cur, target) && st.State != "done" {
+		st.State = "done"
+		st.Percent = 100
+		st.Message = "已升级到 v" + cur
+		st.Error = ""
+	}
 	switch st.State {
 	case "downloading", "verifying":
 		st.State = "error"
@@ -85,15 +101,11 @@ func (s *SelfUpdater) Init() {
 		st.Message = "升级已中断"
 		st.Error = "升级过程被中断，请重新点击升级"
 	case "installing":
-		if sameVersion(cur, target) {
-			st.State = "done"
-			st.Percent = 100
-			st.Message = "已升级到 v" + cur
-			st.Error = ""
-		} else {
-			st.State = "error"
-			st.Message = "升级未完成"
-			st.Error = "升级未完成，当前仍为 v" + cur + "，请重试或前往 Gitee 手动安装"
+		st.State = "error"
+		st.Message = "升级未完成"
+		st.Error = "升级未完成，当前仍为 v" + cur + "，请重试或前往 Gitee 手动安装"
+		if detail != "" {
+			st.Error = "升级未完成（当前仍为 v" + cur + "）：" + detail
 		}
 	}
 	st.At = time.Now().Unix()
@@ -232,10 +244,14 @@ func (s *SelfUpdater) run(info UpdateInfo, target string) {
 		s.setError("当前系统不支持应用内升级", "未找到 appcenter-cli，请前往 Gitee 下载安装包后手动安装")
 		return
 	}
+	_ = os.Remove(filepath.Join(s.dir, "install_error.txt"))
 	s.setStatus("installing", 92, "正在安装更新并重启服务…")
-	if err := s.install(cli, fpk); err != nil {
+	// 安装必须由独立脚本完成：它会先停掉本进程，避免应用中心等待运行中的应用。
+	if err := s.startHelper(cli, fpk, target); err != nil {
 		s.setError("无法启动应用内安装", err.Error())
+		return
 	}
+	s.watchInstall()
 }
 
 func (s *SelfUpdater) wantSHA(ctx context.Context, tag string) string {
@@ -359,8 +375,108 @@ func findAppcenterCLI() string {
 	return ""
 }
 
-// install 用独立会话运行应用中心安装命令：升级会停掉本进程，命令必须继续完成。
-func (s *SelfUpdater) install(cli, fpk string) error {
+// installHelper 是升级安装脚本。由服务器以独立会话启动，先停止应用再调用应用中心；
+// 安装命令限时 240 秒，失败或未生效时直接把 FPK 里的 app.tgz 解包覆盖，最后重新启动应用。
+const installHelper = `#!/bin/sh
+set -u
+CLI="$1"; FPK="$2"; TARGET="$3"; APPDIR="$4"; DATADIR="$5"; MAIN="$6"
+LOG="$DATADIR/logs/update.log"
+ERRF="$DATADIR/updates/install_error.txt"
+rm -f "$ERRF"
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [install] $*" >> "$LOG" 2>/dev/null; }
+note() { printf '%s\n' "$*" > "$ERRF" 2>/dev/null; }
+
+log "开始升级到 v$TARGET：$FPK"
+TMP="$DATADIR/updates/unpack.$$"
+rm -rf "$TMP"; mkdir -p "$TMP" 2>/dev/null || true
+PKG="$FPK"
+# 复制一份再解包：新版服务启动后会删掉 updates/ 下的安装包。
+if cp "$FPK" "$TMP/pkg.fpk" 2>/dev/null; then PKG="$TMP/pkg.fpk"; fi
+"$MAIN" stop >>"$LOG" 2>&1 || true
+
+rc=127
+if [ -x "$CLI" ]; then
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 240 "$CLI" install-fpk "$FPK" </dev/null >>"$LOG" 2>&1
+    rc=$?
+  else
+    "$CLI" install-fpk "$FPK" </dev/null >>"$LOG" 2>&1 &
+    pid=$!
+    n=0
+    while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 240 ]; do sleep 1; n=$((n+1)); done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null
+      rc=124
+    else
+      wait "$pid"; rc=$?
+    fi
+  fi
+fi
+log "install-fpk 退出码 $rc"
+
+ok=0
+if tar -xzf "$PKG" -C "$TMP" app.tgz >>"$LOG" 2>&1; then
+  mkdir -p "$TMP/app" 2>/dev/null || true
+  if tar -xzf "$TMP/app.tgz" -C "$TMP/app" >>"$LOG" 2>&1; then
+    if [ -f "$TMP/app/mdm-fnos-server" ] && cmp -s "$TMP/app/mdm-fnos-server" "$APPDIR/mdm-fnos-server"; then
+      ok=1
+      log "应用中心安装已生效"
+    fi
+  else
+    log "app.tgz 解包失败"
+  fi
+else
+  log "FPK 解包失败"
+fi
+
+if [ "$ok" != "1" ] && [ -f "$TMP/app/mdm-fnos-server" ]; then
+  log "改为本地解包覆盖 $APPDIR"
+  for item in mdm-fnos-server misterdownloadmanager misterdownloadmanager-cli ui licenses; do
+    [ -e "$TMP/app/$item" ] || continue
+    cp -a "$TMP/app/$item" "$APPDIR/" >>"$LOG" 2>&1 || ok=0
+  done
+  [ -f "$APPDIR/mdm-fnos-server" ] && cmp -s "$TMP/app/mdm-fnos-server" "$APPDIR/mdm-fnos-server" && ok=1
+fi
+rm -rf "$TMP"
+
+if [ "$ok" = "1" ]; then
+  chmod 0755 "$APPDIR/mdm-fnos-server" "$APPDIR/misterdownloadmanager" "$APPDIR/misterdownloadmanager-cli" 2>/dev/null || true
+elif [ "$rc" = "124" ]; then
+  note "应用中心安装命令超过 240 秒未返回，请通过应用中心手动安装（更新包已保存在应用数据目录 updates/ 下）"
+else
+  note "应用中心安装失败（退出码 $rc），请通过应用中心手动安装（更新包已保存在应用数据目录 updates/ 下）"
+fi
+
+log "启动应用（ok=$ok）"
+"$MAIN" start >>"$LOG" 2>&1 || true
+if [ "$ok" != "1" ]; then
+  tail -n 12 "$LOG" 2>/dev/null >>"$ERRF"
+fi
+log "升级脚本结束（ok=$ok）"
+exit 0
+`
+
+func (s *SelfUpdater) startHelper(cli, fpk, target string) error {
+	appDir := os.Getenv("APP_DIR")
+	if appDir == "" {
+		if exe, err := os.Executable(); err == nil {
+			appDir = filepath.Dir(exe)
+		}
+	}
+	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		dataDir = filepath.Dir(s.dir)
+	}
+	if appDir == "" || dataDir == "" {
+		return fmt.Errorf("无法确定应用目录，请手动安装更新包")
+	}
+	if err := os.MkdirAll(s.dir, 0700); err != nil {
+		return err
+	}
+	script := filepath.Join(s.dir, "install.sh")
+	if err := os.WriteFile(script, []byte(installHelper), 0700); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.logDir, 0700); err != nil {
 		return err
 	}
@@ -368,32 +484,29 @@ func (s *SelfUpdater) install(cli, fpk string) error {
 	if err != nil {
 		return err
 	}
-	defer logf.Close()
-	fmt.Fprintf(logf, "\n%s [update] appcenter-cli install-fpk %s\n", time.Now().Format("2006-01-02 15:04:05"), fpk)
-	cmd := exec.Command(cli, "install-fpk", fpk)
+	fmt.Fprintf(logf, "\n%s [update] 启动升级脚本：v%s -> %s\n",
+		time.Now().Format("2006-01-02 15:04:05"), appVersion, fpk)
+	cmd := exec.Command("/bin/sh", script, cli, fpk, target, appDir, dataDir, filepath.Join(appDir, "cmd", "main"))
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	cmd.SysProcAttr = detachAttr()
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go func() {
-		err := cmd.Wait()
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.status.State != "installing" {
+	err = cmd.Start()
+	_ = logf.Close()
+	return err
+}
+
+// watchInstall 防止安装命令静默挂起：超过 6 分钟仍未离开 installing 就报错并给出日志路径。
+func (s *SelfUpdater) watchInstall() {
+	deadline := time.Now().Add(6 * time.Minute)
+	for time.Now().Before(deadline) {
+		time.Sleep(5 * time.Second)
+		if s.Status().State != "installing" {
 			return
 		}
-		if err != nil {
-			s.busy = false
-			s.status.State = "error"
-			s.status.Message = "安装更新失败"
-			s.status.Error = "应用中心安装命令执行失败，请查看 logs/update.log 或前往 Gitee 手动安装"
-			_ = s.saveLocked()
-			log.Printf("[update] appcenter-cli exited: %v", err)
-		}
-	}()
-	return nil
+	}
+	if s.Status().State == "installing" {
+		s.setError("安装没有完成", "安装命令长时间未返回。请重启应用后重试，或通过应用中心手动安装更新包（已保存在应用数据目录 updates/ 下）")
+	}
 }
 
 // verifyFPK 校验外层 manifest、app.tgz 校验和、版本、平台与二进制架构。

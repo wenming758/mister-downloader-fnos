@@ -370,7 +370,7 @@
     </form>
 
     <div class="hint" id="gate-hint" hidden></div>
-    <div class="gate-foot">版本 <span id="gate-ver">1.0.7</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
+    <div class="gate-foot">版本 <span id="gate-ver">1.0.8</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
   </div>
 </div>
 
@@ -1267,6 +1267,11 @@
           stopUpdatePoll();
           syncUpdateControls(state.updateInfo);
           toast(st.error || '升级失败', true);
+        } else if (st.state === 'installing' && updateTries > 280) {
+          stopUpdatePoll();
+          $('upd-stage').textContent = '安装超过 4 分钟仍未完成：请重启应用后重试，或到应用中心手动安装（更新包在应用数据目录 updates/ 下）';
+          $('upd-pct').textContent = '';
+          $('upd-recheck').disabled = false;
         }
       }).catch(function () {
         renderUpdateProgress({ state: 'installing', percent: 0, message: '服务正在重启，等待恢复…' });

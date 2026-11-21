@@ -1,5 +1,5 @@
 appname                    = mister-downloader
-version                    = 1.0.7
+version                    = 1.0.8
 display_name               = Mister 下载器
 desc                       = 为飞牛 fnOS 打包的原生下载器，内置 Mister Download Manager 0.5.2 无界面引擎：多连接高速下载、断点续传、分类目录、队列与种子下载。应用带中文登录门禁（未登录完全隐藏内容）、管理员/运维员分级、下载目录设置与 Gitee 更新检测。仅支持 x86 设备，无需 Docker。
 source                     = thirdparty
@@ -19,4 +19,4 @@ ctl_stop                   = true
 checkport                  = false
 disable_authorization_path = true
 
-changelog                  = 1.0.7：修复磁力下载一直没有速度的问题：经公开种子缓存取回的种子现在会写入磁力自带 tracker 与扩充后的公开 tracker 列表（不再只剩 DHT）；长时间零速度时提示该资源可能仅由迅雷等私有节点供源。
+changelog                  = 1.0.8：修复应用内升级停在 92% 不动的问题：升级改为独立脚本先停止应用、限时调用应用中心安装，失败时自动用安装包内文件覆盖并重启；升级中断后可自愈，界面也会在长时间无响应时给出提示。

@@ -107,6 +107,8 @@ def main():
                 check(b"torrentWithTrackers" in blob and b"tracker.dler.com" in blob
                       and b"004430.xyz" in blob, "缓存种子写入磁力与公开 tracker")
                 check("迅雷等私有节点".encode("utf-8") in blob, "长时间零速度提示")
+                check(b"install_error.txt" in blob and b"timeout 240" in blob,
+                      "升级脚本先停应用并限时安装")
         check(fields.get("maintainer") == "Ahmed Nefzaoui", "开发者 = 上游原作者")
         check(fields.get("maintainer_url") == "https://github.com/anefzaoui", "开发者链接")
         check(fields.get("distributor") == "wenming758", "发布者 = wenming758")
