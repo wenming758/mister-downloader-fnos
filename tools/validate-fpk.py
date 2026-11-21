@@ -98,6 +98,12 @@ def main():
                 check(b"appcenter-cli" in blob, "应用内升级调用应用中心")
                 check("立即升级".encode("utf-8") in blob and b"upd-fill" in blob, "升级进度条")
                 check(b"dir-options" in blob and "dir_history".encode("utf-8") in blob, "下载目录历史")
+                check("已是最新版本".encode("utf-8") in blob, "更新按钮始终显示当前状态")
+                check(b"itorrents.org" in blob and b"tracker.opentrackr.org" in blob,
+                      "磁力补齐 tracker 与公开种子缓存回退")
+                check("获取种子".encode("utf-8") in blob and "获取失败".encode("utf-8") in blob,
+                      "磁力等待/失败提示")
+                check(b"pending/dismiss" in blob and b"pending/retry" in blob, "磁力任务重试与移除")
         check(fields.get("maintainer") == "Ahmed Nefzaoui", "开发者 = 上游原作者")
         check(fields.get("maintainer_url") == "https://github.com/anefzaoui", "开发者链接")
         check(fields.get("distributor") == "wenming758", "发布者 = wenming758")

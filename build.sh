@@ -12,7 +12,13 @@ log() { echo "[build] $*"; }
 die() { echo "[build][ERROR] $*" >&2; exit 1; }
 
 command -v go >/dev/null 2>&1 || die "未找到 go，请安装 Go 1.24+"
-command -v python3 >/dev/null 2>&1 || die "未找到 python3"
+PYTHON="${PYTHON:-}"
+if [ -z "$PYTHON" ]; then
+  for c in python3 python; do
+    if "$c" -c "import sys" >/dev/null 2>&1; then PYTHON="$c"; break; fi
+  done
+fi
+[ -n "$PYTHON" ] || die "未找到可用的 python"
 command -v fnpack >/dev/null 2>&1 || die "未找到 fnpack 1.2.x"
 
 if [ -z "$UPSTREAM_DIR" ]; then
@@ -37,7 +43,7 @@ log "fnpack 打包"
 (cd fpk && fnpack build -d src)
 
 log "修正权限与 checksum"
-python3 tools/patch-fpk.py "fpk/mister-downloader.fpk" "$OUT"
+"$PYTHON" tools/patch-fpk.py "fpk/mister-downloader.fpk" "$OUT"
 
 log "生成 SHA256SUMS.txt"
 cd "$ROOT"

@@ -123,13 +123,21 @@ func (m *Manager) buildProxy() *httputil.ReverseProxy {
 
 // Call 带令牌访问下载引擎自身的远端接口，供原生面板使用。
 func (m *Manager) Call(ctx context.Context, method, path string, body any) (int, []byte, error) {
+	if body == nil {
+		return m.CallRaw(ctx, method, path, "", nil)
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return 0, nil, err
+	}
+	return m.CallRaw(ctx, method, path, "application/json", raw)
+}
+
+// CallRaw 以原始字节访问引擎接口（.torrent 文件等非 JSON 请求体）。
+func (m *Manager) CallRaw(ctx context.Context, method, path, contentType string, body []byte) (int, []byte, error) {
 	var rdr io.Reader
 	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil {
-			return 0, nil, err
-		}
-		rdr = bytes.NewReader(raw)
+		rdr = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, m.target.String()+path, rdr)
 	if err != nil {
@@ -138,8 +146,8 @@ func (m *Manager) Call(ctx context.Context, method, path string, body any) (int,
 	req.Host = m.target.Host
 	req.Header.Set("Origin", "https://"+m.target.Host)
 	req.Header.Set("Authorization", "Bearer "+m.Token())
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	res, err := m.client.Do(req)
 	if err != nil {

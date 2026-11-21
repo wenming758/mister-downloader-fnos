@@ -279,6 +279,11 @@
   .userrow .del { margin-left: auto; }
   .notes { white-space: pre-wrap; font-size: 13px; line-height: 1.65; background: var(--paper); border: 2px dashed color-mix(in srgb, var(--ink) 35%, transparent); border-radius: 12px; padding: 10px 12px; max-height: 220px; overflow: auto; }
   .upd-banner { background: color-mix(in srgb, var(--mint) 55%, transparent); border: 2px solid var(--ink); border-radius: 14px; padding: 10px 12px; font-weight: 800; font-size: 13px; margin-bottom: 12px; }
+  .upd-banner.neutral { background: color-mix(in srgb, var(--ink) 8%, var(--paper-2)); }
+  .upd-banner.bad { background: var(--rose); }
+  .task .acts .btn { padding: 6px 12px; font-size: 12.5px; }
+  .task.pending { border-style: dashed; background: color-mix(in srgb, var(--sky) 22%, var(--card)); }
+  .task.pending.err { background: color-mix(in srgb, var(--rose) 35%, var(--card)); }
   .upd-progress { margin-bottom: 14px; }
   .upd-bar { height: 18px; border: 2.5px solid var(--ink); border-radius: 999px; background: var(--paper-2); overflow: hidden; }
   .upd-fill { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--mint-deep), var(--mint)); border-right: 2.5px solid var(--ink); transition: width .35s ease; }
@@ -364,7 +369,7 @@
     </form>
 
     <div class="hint" id="gate-hint" hidden></div>
-    <div class="gate-foot">版本 <span id="gate-ver">1.0.5</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
+    <div class="gate-foot">版本 <span id="gate-ver">1.0.6</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
   </div>
 </div>
 
@@ -407,6 +412,7 @@
         <button class="btn" type="button" id="warn-restart" hidden>重启引擎</button>
         <button class="btn ghost" type="button" id="warn-legacy">打开原生版面板</button>
       </div>
+      <div class="tasks" id="pending"></div>
       <div class="tasks" id="tasks"></div>
       <div class="empty" id="tasks-empty">
         <div class="big">还没有下载任务</div>
@@ -435,12 +441,12 @@
       <div class="upd-stage"><span id="upd-stage">准备升级…</span><span class="pct" id="upd-pct"></span></div>
     </div>
     <div class="row" style="margin-top:14px">
-      <button class="btn primary" id="upd-apply" hidden>立即升级</button>
+      <button class="btn primary" id="upd-apply" disabled>立即升级</button>
       <button class="btn" id="upd-recheck">立即检查</button>
       <a class="btn" id="upd-open" href="#" target="_blank" rel="noopener">前往 Gitee 下载</a>
       <a class="btn" id="upd-fpk" href="#" target="_blank" rel="noopener" hidden>直接下载安装包</a>
     </div>
-    <p style="margin-top:12px">“立即升级”会在应用内下载并校验安装包，随后调用飞牛应用中心完成安装并自动重启；升级期间下载中的任务会自动继续。</p>
+    <p style="margin-top:12px">“立即升级”会在应用内下载并校验安装包，随后调用飞牛应用中心完成安装并自动重启；升级期间下载中的任务会自动继续。按钮显示“已是最新版本”时说明当前版本不需要升级。</p>
   </div>
 </dialog>
 
@@ -553,7 +559,7 @@
   if (!BASE.endsWith('/')) BASE = BASE.substring(0, BASE.lastIndexOf('/') + 1);
   if (BASE === '') BASE = '/';
 
-  var state = { me: null, status: null, timer: null, token: '', view: 'native', tasksTimer: null, tasksBusy: false, tasks: null };
+  var state = { me: null, status: null, timer: null, token: '', view: 'native', tasksTimer: null, tasksBusy: false, tasks: null, pendingErrSeen: {} };
 
   function $(id) { return document.getElementById(id); }
   function getSession() {
@@ -817,6 +823,8 @@
   function renderTasks() {
     var box = $('tasks');
     var list = (state.tasks && state.tasks.downloads) || [];
+    var pend = (state.tasks && state.tasks.pending) || [];
+    renderPending(pend);
     list = list.slice().sort(function (a, b) { return b.id - a.id; });
     var seen = {};
     list.forEach(function (t, idx) {
@@ -835,7 +843,86 @@
         taskCards.delete(id);
       }
     });
-    $('tasks-empty').classList.toggle('hidden', list.length > 0 || state.tasks === null);
+    $('tasks-empty').classList.toggle('hidden', list.length > 0 || pend.length > 0 || state.tasks === null);
+  }
+
+  function pendingAction(hash, action) {
+    api('pending/' + action, { body: { hash: hash } }).then(function () {
+      toast(action === 'dismiss' ? '已移除该等待任务' : '已重新开始查找种子信息');
+      pollTasks();
+    }).catch(function (e) { toast(e.message, true); });
+  }
+
+  function buildPendingCard(p) {
+    var failed = !!p.error;
+    var el = document.createElement('div');
+    el.className = 'task pending' + (failed ? ' err' : '');
+
+    var head = document.createElement('div');
+    head.className = 'head';
+    var name = document.createElement('div');
+    name.className = 'fname';
+    name.textContent = p.name || ('磁力任务 ' + String(p.hash || '').substring(0, 10));
+    name.title = p.magnet || '';
+    var pill = document.createElement('span');
+    pill.className = 'pill ' + (failed ? 'err' : 'dl');
+    pill.textContent = failed ? '获取失败' : '获取种子';
+    head.appendChild(name);
+    head.appendChild(pill);
+    el.appendChild(head);
+
+    if (!failed) {
+      var bar = document.createElement('div');
+      bar.className = 'bar indet';
+      bar.appendChild(document.createElement('i'));
+      el.appendChild(bar);
+    }
+
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var text = document.createElement('span');
+    if (failed) {
+      text.className = 'errtext';
+      text.textContent = p.error;
+    } else {
+      var secs = Number(p.elapsed) || 0;
+      var waited = secs < 60 ? secs + ' 秒' : Math.floor(secs / 60) + ' 分 ' + (secs % 60) + ' 秒';
+      text.textContent = '磁力任务 · 已等待 ' + waited + ' · ' + (p.message || '正在获取种子信息…');
+    }
+    meta.appendChild(text);
+    el.appendChild(meta);
+
+    var acts = document.createElement('div');
+    acts.className = 'acts';
+    if (failed) {
+      var retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'btn';
+      retry.textContent = '重试';
+      retry.addEventListener('click', function () { retry.disabled = true; pendingAction(p.hash, 'retry'); });
+      acts.appendChild(retry);
+    }
+    var drop = document.createElement('button');
+    drop.type = 'button';
+    drop.className = 'btn' + (failed ? '' : ' ghost');
+    drop.textContent = failed ? '移除' : '取消';
+    drop.addEventListener('click', function () { drop.disabled = true; pendingAction(p.hash, 'dismiss'); });
+    acts.appendChild(drop);
+    el.appendChild(acts);
+    return el;
+  }
+
+  function renderPending(list) {
+    var box = $('pending');
+    if (!box) return;
+    box.innerHTML = '';
+    list.forEach(function (p) {
+      if (p.error && !state.pendingErrSeen[p.hash]) {
+        state.pendingErrSeen[p.hash] = true;
+        toast('磁力任务获取种子信息失败：' + p.name, true);
+      }
+      box.appendChild(buildPendingCard(p));
+    });
   }
 
   function newButton(label, action, cls, confirmText, getTask) {
@@ -1009,7 +1096,7 @@
       rememberDir(dir);
       $('add-url').value = '';
       $('dlg-add').close();
-      if (r && r.pending) toast('已添加，正在获取种子信息…');
+      if (r && r.pending) toast('已添加，正在获取种子信息，可在列表中查看进度…');
       else toast(switching ? '已添加，下载目录切换为 ' + dir : '已添加下载');
       pollTasks();
       if (switching) { setTimeout(pollTasks, 1200); setTimeout(pollTasks, 4000); }
@@ -1147,6 +1234,7 @@
     stopUpdatePoll();
     updateTries = 0;
     $('upd-apply').disabled = true;
+    $('upd-apply').textContent = '升级中…';
     $('upd-recheck').disabled = true;
     renderUpdateProgress({ state: 'downloading', percent: 1, message: '正在下载更新包…' });
     updatePolling = setInterval(function () {
@@ -1162,8 +1250,7 @@
           setTimeout(function () { location.reload(); }, 1800);
         } else if (st.state === 'error') {
           stopUpdatePoll();
-          $('upd-apply').disabled = false;
-          $('upd-recheck').disabled = false;
+          syncUpdateControls(state.updateInfo);
           toast(st.error || '升级失败', true);
         }
       }).catch(function () {
@@ -1178,11 +1265,38 @@
   }
 
   function syncUpdateControls(u) {
-    var admin = state.me && state.me.user.role === 'admin';
-    var canApply = !!(u && u.has_update && u.asset && admin);
-    $('upd-apply').hidden = !canApply;
-    $('upd-apply').disabled = !canApply;
+    var btn = $('upd-apply');
+    var banner = $('upd-banner');
+    btn.hidden = false;
+    banner.classList.remove('hidden', 'bad', 'neutral');
+    if (!u) {
+      btn.disabled = true;
+      btn.textContent = '立即升级';
+      return;
+    }
+    var ver = u.latest || '';
+    if (u.error) {
+      btn.disabled = true;
+      btn.textContent = '暂时无法升级';
+      banner.textContent = u.error;
+      banner.classList.add('bad');
+    } else if (u.has_update && u.asset) {
+      btn.disabled = false;
+      btn.textContent = '立即升级到 ' + ver;
+      banner.textContent = '发现新版本 ' + ver + '，可点击“立即升级”。';
+    } else if (u.has_update) {
+      btn.disabled = true;
+      btn.textContent = '安装包缺失';
+      banner.textContent = '发现新版本 ' + ver + '，但更新源里没有找到 .fpk 安装包，请前往 Gitee 下载。';
+    } else {
+      btn.disabled = true;
+      btn.textContent = '已是最新版本';
+      banner.textContent = '当前已是最新版本（v' + u.current + '），无需升级。';
+      banner.classList.add('neutral');
+    }
+    state.updateInfo = u;
     $('upd-recheck').disabled = false;
+    $('upd-badge').classList.toggle('hidden', !(u.has_update && !u.error));
   }
 
   function checkUpdate(force) {
@@ -1195,15 +1309,6 @@
       $('upd-open').href = u.url || u.source;
       var fpk = $('upd-fpk');
       if (u.asset) { fpk.href = u.asset; fpk.hidden = false; } else { fpk.hidden = true; }
-      var banner = $('upd-banner');
-      if (u.has_update) {
-        banner.textContent = '发现新版本 ' + u.latest + (u.asset ? '，可点击“立即升级”。' : '，请前往 Gitee 下载。');
-        banner.classList.remove('hidden');
-        $('upd-badge').classList.remove('hidden');
-      } else {
-        banner.classList.add('hidden');
-        $('upd-badge').classList.add('hidden');
-      }
       syncUpdateControls(u);
       if (force) toast(u.error ? u.error : (u.has_update ? '发现新版本 ' + u.latest : '已是最新版本'), !!u.error);
       return api('update/status');
@@ -1212,6 +1317,7 @@
         startUpdatePoll();
       }
     }).catch(function (e) {
+      syncUpdateControls(null);
       if (force) toast(e.message, true);
     });
   }
@@ -1224,7 +1330,7 @@
       startUpdatePoll();
     }).catch(function (e) {
       toast(e.message, true);
-      btn.disabled = false;
+      syncUpdateControls(state.updateInfo);
     });
   });
 

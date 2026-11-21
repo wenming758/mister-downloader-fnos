@@ -22,7 +22,7 @@ import (
 const (
 	appID           = "mister-downloader"
 	appDisplayName  = "Mister 下载器"
-	appVersion      = "1.0.5"
+	appVersion      = "1.0.6"
 	upstreamVersion = "0.5.2"
 )
 
@@ -38,6 +38,8 @@ type App struct {
 	appDir   string
 	web      fs.FS
 	dirMu    sync.Mutex
+	pendMu   sync.Mutex
+	pending  map[string]*PendingMagnet
 }
 
 func main() {
@@ -81,7 +83,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("读取内置页面失败: %v", err)
 	}
-	a := &App{auth: auth, mgr: mgr, upd: NewUpdater(), self: NewSelfUpdater(dataRoot), dataRoot: dataRoot, appDir: appDir, web: sub}
+	a := &App{auth: auth, mgr: mgr, upd: NewUpdater(), self: NewSelfUpdater(dataRoot), dataRoot: dataRoot, appDir: appDir, web: sub, pending: make(map[string]*PendingMagnet)}
 	a.self.Init()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -358,6 +360,10 @@ func (a *App) handleAPI(w http.ResponseWriter, r *http.Request) {
 		a.apiTasks(w, r)
 	case "/fnapi/tasks/act":
 		a.apiTasksAct(w, r)
+	case "/fnapi/pending/dismiss":
+		a.apiPendingDismiss(w, r)
+	case "/fnapi/pending/retry":
+		a.apiPendingRetry(w, r)
 	case "/fnapi/settings":
 		a.apiSettings(w, r)
 	case "/fnapi/users":
@@ -520,7 +526,7 @@ func (a *App) apiTasks(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(raw)
+		_, _ = w.Write(a.attachPending(raw))
 	case http.MethodPost:
 		var in struct {
 			URL   string `json:"url"`
@@ -539,7 +545,8 @@ func (a *App) apiTasks(w http.ResponseWriter, r *http.Request) {
 		if in.Start != nil {
 			start = *in.Start
 		}
-		if dir := strings.TrimSpace(in.Dir); dir != "" {
+		dir := strings.TrimSpace(in.Dir)
+		if dir != "" {
 			d := cleanDir(dir)
 			if d == "" || len(d) > 4096 {
 				fail(w, http.StatusBadRequest, "下载路径无效，请填写服务器上的绝对路径")
@@ -549,8 +556,30 @@ func (a *App) apiTasks(w http.ResponseWriter, r *http.Request) {
 				fail(w, http.StatusBadRequest, "无法使用该下载路径："+err.Error())
 				return
 			}
+			dir = d
 		}
-		code, raw, err := a.mgr.Call(ctx, http.MethodPost, "/api/add", map[string]any{"url": u, "start": start})
+		isMagnet := strings.HasPrefix(strings.ToLower(u), "magnet:")
+		hash, name := "", ""
+		if isMagnet {
+			h, err := magnetInfoHash(u)
+			if err != nil {
+				fail(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			hash = h
+			name = magnetName(u)
+			if name == "" {
+				name = "磁力任务 " + shortHash(hash)
+			}
+			// 很多磁力只有 xt 和 dn；补上公开 tracker 再交给引擎。
+			u = withPublicTrackers(u)
+		}
+		code, raw, err := func() (int, []byte, error) {
+			// 切换目录会重启引擎，单独给添加请求留出时间。
+			callCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			defer cancel()
+			return a.mgr.Call(callCtx, http.MethodPost, "/api/add", map[string]any{"url": u, "start": start})
+		}()
 		if err != nil {
 			log.Printf("[tasks] add: %v", err)
 			fail(w, http.StatusServiceUnavailable, "下载引擎暂未就绪，请稍后重试")
@@ -559,6 +588,16 @@ func (a *App) apiTasks(w http.ResponseWriter, r *http.Request) {
 		if code != http.StatusOK {
 			fail(w, http.StatusBadRequest, engineMessage(code))
 			return
+		}
+		if isMagnet {
+			var ans struct {
+				Pending bool `json:"pending"`
+			}
+			if json.Unmarshal(raw, &ans) == nil && ans.Pending {
+				a.trackMagnet(u, hash, name, dir)
+				writeJSON(w, http.StatusOK, map[string]any{"pending": true, "hash": hash, "name": name})
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
@@ -867,7 +906,7 @@ func (a *App) apiUpdateApply(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusMethodNotAllowed, "方法不允许")
 		return
 	}
-	if _, ok := a.requireUser(w, r, true); !ok {
+	if _, ok := a.requireUser(w, r, false); !ok {
 		return
 	}
 	info := a.upd.Check(r.Context(), true)
