@@ -91,6 +91,14 @@ def main():
                 check(b"magnet:?xt=" in blob and b"tasks/act" in blob, "内置原生下载面板")
                 check(b"askConfirm" in blob, "应用内确认弹窗")
                 check(b"download_dir" in blob, "下载目录设置接口")
+                check("优化版".encode("utf-8") in blob and "原生版".encode("utf-8") in blob,
+                      "优化版/原生版视图切换")
+                check(b"add-dlg-dir" in blob, "添加下载时选择保存目录")
+                check("已删除任务和文件".encode("utf-8") in blob, "删除任务并清除已下载文件")
+        check(fields.get("maintainer") == "Ahmed Nefzaoui", "开发者 = 上游原作者")
+        check(fields.get("maintainer_url") == "https://github.com/anefzaoui", "开发者链接")
+        check(fields.get("distributor") == "wenming758", "发布者 = wenming758")
+        check(fields.get("distributor_url") == "https://gitee.com/wenming760", "发布者链接")
 
     print()
     if fails:

@@ -246,6 +246,18 @@
     box-shadow: var(--shadow);
   }
   dialog::backdrop { background: rgba(20, 22, 28, .5); backdrop-filter: blur(2px); }
+  dialog.dlg-flex[open] { display: flex; flex-direction: column; }
+  .dlg-flex .dlg-body { flex: 1 1 auto; overflow: auto; max-height: none; min-height: 0; }
+  .dlg-foot { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; padding: 12px 18px 14px; border-top: var(--line); }
+  #dlg-confirm { width: min(430px, calc(100vw - 28px)); }
+  #dlg-confirm .dlg-body { padding: 18px 18px 16px; }
+  .ctitle { margin: 0 0 8px; font-size: 16px; }
+  textarea {
+    width: 100%; padding: 12px 14px; border: var(--line); border-radius: 14px;
+    background: var(--paper); outline: none; font-size: 14px; resize: vertical; min-height: 62px;
+    font-family: inherit;
+  }
+  textarea:focus { box-shadow: 0 0 0 4px color-mix(in srgb, var(--mint) 65%, transparent); }
   .dlg-head { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: var(--line); }
   .dlg-head h3 { margin: 0; font-size: 17px; }
   .dlg-head .x { margin-left: auto; }
@@ -337,7 +349,7 @@
     </form>
 
     <div class="hint" id="gate-hint" hidden></div>
-    <div class="gate-foot">版本 <span id="gate-ver">1.0.3</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
+    <div class="gate-foot">版本 <span id="gate-ver">1.0.4</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
   </div>
 </div>
 
@@ -356,9 +368,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16 5.5a3 3 0 0 1 0 5.6M17.5 15c2 .5 3.2 2 3.5 4.5"/></svg>
       <span class="label">账户</span>
     </button>
-    <button class="tbtn" id="btn-legacy" title="切换原生 / 原版界面">
+    <button class="tbtn" id="btn-legacy" title="切换优化版 / 原生版界面">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/><circle cx="6.5" cy="6.5" r=".8" fill="currentColor"/></svg>
-      <span class="label">原版</span>
+      <span class="label">原生版</span>
     </button>
     <button class="tbtn" id="btn-settings" title="设置">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7"/></svg>
@@ -378,16 +390,16 @@
       <div class="engine-warn hidden" id="engine-warn">
         <span class="msg" id="engine-warn-text"></span>
         <button class="btn" type="button" id="warn-restart" hidden>重启引擎</button>
-        <button class="btn ghost" type="button" id="warn-legacy">打开原版面板</button>
+        <button class="btn ghost" type="button" id="warn-legacy">打开原生版面板</button>
       </div>
       <div class="tasks" id="tasks"></div>
       <div class="empty" id="tasks-empty">
         <div class="big">还没有下载任务</div>
-        <div>把直链、磁力链接粘到上面，点“添加下载”。<br>保存位置在“设置”里修改。</div>
+        <div>把直链、磁力链接粘到上面，点“添加下载”并选择保存位置。<br>默认目录可在“设置”里修改。</div>
       </div>
     </div>
     <div class="loading hidden" id="panel-loading"><div class="spinner"></div><div>正在启动下载引擎…</div></div>
-    <iframe id="panel" title="原版下载面板" hidden></iframe>
+    <iframe id="panel" title="原生版下载面板" hidden></iframe>
   </div>
 </div>
 
@@ -464,9 +476,29 @@
   </div>
 </dialog>
 
-<dialog id="dlg-confirm">
-  <div class="dlg-head"><h3>请确认</h3><button class="btn ghost x" data-close="dlg-confirm">取消</button></div>
+<dialog id="dlg-add" class="dlg-flex">
+  <div class="dlg-head"><h3>添加下载</h3><button class="btn ghost x" data-close="dlg-add">取消</button></div>
   <div class="dlg-body">
+    <div>
+      <label for="add-dlg-url">下载链接</label>
+      <textarea id="add-dlg-url" rows="2" spellcheck="false" placeholder="http(s) 直链或 magnet:?xt=..."></textarea>
+    </div>
+    <div style="margin-top:12px">
+      <label for="add-dlg-dir">下载到（服务器绝对路径）</label>
+      <input type="text" id="add-dlg-dir" spellcheck="false" placeholder="/vol2/1000/临时文件">
+    </div>
+    <p style="margin-top:8px">目录不存在会自动创建；更换目录时引擎重启一次，运行中的任务会自动继续。</p>
+    <p class="err hidden" id="add-dlg-err"></p>
+  </div>
+  <div class="dlg-foot">
+    <button class="btn" type="button" data-close="dlg-add">取消</button>
+    <button class="btn primary" type="button" id="add-dlg-go">开始下载</button>
+  </div>
+</dialog>
+
+<dialog id="dlg-confirm">
+  <div class="dlg-body">
+    <h3 class="ctitle">请确认</h3>
     <p id="confirm-text" style="color:var(--ink);font-size:14px;font-weight:700"></p>
     <div class="row" style="justify-content:flex-end">
       <button class="btn" id="confirm-no">取消</button>
@@ -482,11 +514,13 @@
       <b>应用</b><span>Mister 下载器（飞牛 fnOS 原生应用）</span>
       <b>版本</b><span id="about-ver"></span>
       <b>下载引擎</b><span>Mister Download Manager 0.5.2（headless）</span>
+      <b>开发者</b><span>Ahmed Nefzaoui（<a href="https://github.com/anefzaoui" target="_blank" rel="noopener">GitHub 原作者</a>）</span>
+      <b>发布者</b><span>wenming758 / wenming760</span>
       <b>许可证</b><span>GPL-3.0（上游 MDM），本适配层同源发布</span>
       <b>上游项目</b><span><a href="https://github.com/anefzaoui/misterdownloadmanager" target="_blank" rel="noopener">github.com/anefzaoui/misterdownloadmanager</a></span>
       <b>Gitee</b><span><a href="https://gitee.com/wenming760/mister-downloader-fnos" target="_blank" rel="noopener">gitee.com/wenming760/mister-downloader-fnos</a></span>
     </div>
-    <p>本应用不是 MDM 官方发行版，由社区封装为飞牛原生应用；仅做服务包装、登录门禁与更新入口。</p>
+    <p>MDM 的开发者是 GitHub 原作者 Ahmed Nefzaoui；本应用不是 MDM 官方发行版，由社区（wenming758 / wenming760）封装为飞牛原生应用，仅做服务包装、登录门禁、优化版界面与更新入口。</p>
   </div>
 </dialog>
 
@@ -631,7 +665,7 @@
     var legacy = v === 'legacy';
     $('native').classList.toggle('hidden', legacy);
     var lbl = $('btn-legacy').querySelector('.label');
-    if (lbl) lbl.textContent = legacy ? '原生' : '原版';
+    if (lbl) lbl.textContent = legacy ? '优化版' : '原生版';
     var f = $('panel');
     if (legacy) {
       $('panel-loading').classList.remove('hidden');
@@ -747,7 +781,7 @@
             pollTasks();
             return;
           }
-          toast(action === 'delete' ? '已删除任务和文件' : action === 'remove' ? '已从列表移除' : action === 'pause' ? '已暂停' : '已开始');
+          toast(action === 'remove' ? '已删除任务和文件' : action === 'pause' ? '已暂停' : '已开始');
           pollTasks();
         }).catch(function (e) { toast(e.message, true); })
           .finally(function () { b.disabled = false; });
@@ -756,7 +790,8 @@
         run();
         return;
       }
-      askConfirm(confirmText, cls === 'danger').then(function (ok) {
+      var text = typeof confirmText === 'function' ? confirmText(t) : confirmText;
+      askConfirm(text, cls === 'danger').then(function (ok) {
         if (ok) run();
       });
     });
@@ -799,9 +834,10 @@
     var getTask = function () { return card.task; };
     card.btnPause = newButton('暂停', 'pause', '', '', getTask);
     card.btnStart = newButton('继续', 'start', '', '', getTask);
-    card.btnRemove = newButton('移除', 'remove', '', '从下载列表移除？已下载的文件会保留。', getTask);
-    card.btnDelete = newButton('删除文件', 'delete', 'danger', '删除任务并从磁盘删除已下载的文件？此操作不可撤销。', getTask);
-    [card.btnPause, card.btnStart, card.btnRemove, card.btnDelete].forEach(function (b) {
+    card.btnDelete = newButton('删除', 'remove', 'danger', function (t) {
+      return '删除“' + (t.file || ('任务 #' + t.id)) + '”并清除磁盘上已下载的部分？此操作不可恢复。';
+    }, getTask);
+    [card.btnPause, card.btnStart, card.btnDelete].forEach(function (b) {
       card.acts.appendChild(b);
     });
     card.el.appendChild(card.acts);
@@ -837,8 +873,7 @@
 
     card.btnPause.hidden = !running;
     card.btnStart.hidden = !(t.status === 'Stopped' || t.status === 'Error');
-    card.btnRemove.hidden = running;
-    card.btnDelete.hidden = !(t.status === 'Complete' || t.status === 'Error');
+    card.btnDelete.hidden = false;
   }
 
   function actReason(why) {
@@ -864,19 +899,60 @@
     setTimeout(pollTasks, 4000);
   }
 
+  function openAddDialog(url) {
+    $('add-dlg-url').value = url || '';
+    $('add-dlg-dir').value = (state.me && state.me.download_dir) || '';
+    $('add-dlg-err').classList.add('hidden');
+    $('add-dlg-go').disabled = false;
+    $('dlg-add').showModal();
+    setTimeout(function () {
+      if (url) { $('add-dlg-dir').focus(); $('add-dlg-dir').select(); }
+      else $('add-dlg-url').focus();
+    }, 30);
+  }
+
+  function sameDir(a, b) {
+    a = String(a || '').replace(/\/+$/, '');
+    b = String(b || '').replace(/\/+$/, '');
+    return a === b;
+  }
+
+  function submitAdd() {
+    var url = $('add-dlg-url').value.trim();
+    var dir = $('add-dlg-dir').value.trim();
+    var err = $('add-dlg-err');
+    var show = function (m) { err.textContent = m; err.classList.remove('hidden'); };
+    if (!url) { show('请粘贴下载链接'); $('add-dlg-url').focus(); return; }
+    if (!/^(https?:\/\/|magnet:\?|ftp:\/\/)/i.test(url)) { show('请粘贴 http(s)、magnet:?xt= 或 ftp 地址'); return; }
+    if (!dir || !/^([/\\]|[A-Za-z]:[\\/])/.test(dir)) { show('保存目录必须是服务器上的绝对路径，例如 /vol2/1000/临时文件'); $('add-dlg-dir').focus(); return; }
+    if (!/^[^\r\n]+$/.test(dir)) { show('保存目录包含无效字符'); return; }
+    var btn = $('add-dlg-go');
+    var switching = !state.me || !sameDir(dir, state.me.download_dir);
+    btn.disabled = true;
+    err.classList.add('hidden');
+    api('tasks', { body: { url: url, dir: dir, start: true } }).then(function (r) {
+      if (state.me) state.me.download_dir = dir;
+      $('add-url').value = '';
+      $('dlg-add').close();
+      if (r && r.pending) toast('已添加，正在获取种子信息…');
+      else toast(switching ? '已添加，下载目录切换为 ' + dir : '已添加下载');
+      pollTasks();
+      if (switching) { setTimeout(pollTasks, 1200); setTimeout(pollTasks, 4000); }
+    }).catch(function (e) {
+      show(e.message);
+    }).finally(function () { btn.disabled = false; });
+  }
+
   $('add-form').addEventListener('submit', function (ev) {
     ev.preventDefault();
-    var input = $('add-url');
-    var url = input.value.trim();
-    if (!url) { toast('请粘贴下载地址', true); return; }
-    var btn = $('add-btn');
-    btn.disabled = true;
-    api('tasks', { body: { url: url, start: true } }).then(function (r) {
-      input.value = '';
-      toast(r && r.pending ? '已添加，正在获取种子信息…' : '已添加下载');
-      pollTasks();
-    }).catch(function (e) { toast(e.message, true); })
-      .finally(function () { btn.disabled = false; });
+    openAddDialog($('add-url').value.trim());
+  });
+  $('add-dlg-go').addEventListener('click', submitAdd);
+  $('add-dlg-url').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); submitAdd(); }
+  });
+  $('add-dlg-dir').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') { ev.preventDefault(); submitAdd(); }
   });
 
   $('btn-legacy').addEventListener('click', function () {
@@ -1059,7 +1135,7 @@
   document.querySelectorAll('[data-close]').forEach(function (b) {
     b.addEventListener('click', function () { $(b.dataset.close).close(); });
   });
-  ['dlg-update', 'dlg-settings', 'dlg-users', 'dlg-about', 'dlg-confirm'].forEach(function (id) {
+  ['dlg-update', 'dlg-settings', 'dlg-users', 'dlg-about', 'dlg-confirm', 'dlg-add'].forEach(function (id) {
     var d = $(id);
     d.addEventListener('click', function (ev) {
       if (ev.target === d) d.close();

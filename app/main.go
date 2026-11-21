@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -21,7 +22,7 @@ import (
 const (
 	appID           = "mister-downloader"
 	appDisplayName  = "Mister 下载器"
-	appVersion      = "1.0.3"
+	appVersion      = "1.0.4"
 	upstreamVersion = "0.5.2"
 )
 
@@ -35,6 +36,7 @@ type App struct {
 	dataRoot string
 	appDir   string
 	web      fs.FS
+	dirMu    sync.Mutex
 }
 
 func main() {
@@ -515,6 +517,7 @@ func (a *App) apiTasks(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			URL   string `json:"url"`
 			Start *bool  `json:"start"`
+			Dir   string `json:"dir"`
 		}
 		if !decodeJSON(w, r, &in) {
 			return
@@ -527,6 +530,17 @@ func (a *App) apiTasks(w http.ResponseWriter, r *http.Request) {
 		start := true
 		if in.Start != nil {
 			start = *in.Start
+		}
+		if dir := strings.TrimSpace(in.Dir); dir != "" {
+			d := cleanDir(dir)
+			if d == "" || len(d) > 4096 {
+				fail(w, http.StatusBadRequest, "下载路径无效，请填写服务器上的绝对路径")
+				return
+			}
+			if err := a.switchDownloadDir(ctx, d); err != nil {
+				fail(w, http.StatusBadRequest, "无法使用该下载路径："+err.Error())
+				return
+			}
 		}
 		code, raw, err := a.mgr.Call(ctx, http.MethodPost, "/api/add", map[string]any{"url": u, "start": start})
 		if err != nil {
@@ -572,9 +586,17 @@ func (a *App) apiTasksAct(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "缺少任务编号")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
 	defer cancel()
-	code, raw, err := a.mgr.Call(ctx, http.MethodPost, "/api/act", map[string]any{"action": in.Action, "ids": in.IDs})
+	var code int
+	var raw []byte
+	var err error
+	if in.Action == "remove" {
+		// 界面上的“删除”始终连文件一起删：先暂停仍在下载的任务，再让引擎清理文件。
+		code, raw, err = a.removeTasks(ctx, in.IDs)
+	} else {
+		code, raw, err = a.mgr.Call(ctx, http.MethodPost, "/api/act", map[string]any{"action": in.Action, "ids": in.IDs})
+	}
 	if err != nil {
 		log.Printf("[tasks] act %s: %v", in.Action, err)
 		fail(w, http.StatusServiceUnavailable, "下载引擎暂未就绪，请稍后重试")
@@ -588,6 +610,98 @@ func (a *App) apiTasksAct(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
+}
+
+// removeTasks 先暂停（仍在下载的），等引擎停下后再连文件一起删除。
+func (a *App) removeTasks(ctx context.Context, ids []uint64) (int, []byte, error) {
+	if _, _, err := a.mgr.Call(ctx, http.MethodPost, "/api/act", map[string]any{"action": "pause", "ids": ids}); err != nil {
+		return 0, nil, err
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		code, raw, err := a.mgr.Call(ctx, http.MethodGet, "/api/list", nil)
+		if err == nil && code == http.StatusOK && !anyRunning(raw, ids) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return 0, nil, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+	return a.mgr.Call(ctx, http.MethodPost, "/api/act", map[string]any{"action": "delete", "ids": ids})
+}
+
+func anyRunning(raw []byte, ids []uint64) bool {
+	var list struct {
+		Downloads []struct {
+			ID     uint64 `json:"id"`
+			Status string `json:"status"`
+		} `json:"downloads"`
+	}
+	if json.Unmarshal(raw, &list) != nil {
+		return true
+	}
+	want := make(map[uint64]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	for _, d := range list.Downloads {
+		if want[d.ID] && (d.Status == "Downloading" || d.Status == "Connecting") {
+			return true
+		}
+	}
+	return false
+}
+
+// switchDownloadDir 保存新的下载目录；目录变化时重启引擎，并在就绪后恢复之前运行中的任务。
+func (a *App) switchDownloadDir(ctx context.Context, dir string) error {
+	a.dirMu.Lock()
+	defer a.dirMu.Unlock()
+	if dir == a.mgr.dirFn() {
+		return nil
+	}
+	if err := prepareDownloadDir(dir); err != nil {
+		return err
+	}
+	probe := filepath.Join(dir, ".mdm-write-test")
+	if err := os.WriteFile(probe, []byte("ok"), 0600); err != nil {
+		return fmt.Errorf("目录不可写：%v", err)
+	}
+	_ = os.Remove(probe)
+
+	runCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	var running []uint64
+	if code, raw, err := a.mgr.Call(runCtx, http.MethodGet, "/api/list", nil); err == nil && code == http.StatusOK {
+		var list struct {
+			Downloads []struct {
+				ID     uint64 `json:"id"`
+				Status string `json:"status"`
+			} `json:"downloads"`
+		}
+		if json.Unmarshal(raw, &list) == nil {
+			for _, d := range list.Downloads {
+				if d.Status == "Downloading" || d.Status == "Connecting" {
+					running = append(running, d.ID)
+				}
+			}
+		}
+	}
+	if err := a.auth.SetDownloadDir(dir); err != nil {
+		return fmt.Errorf("保存设置失败：%v", err)
+	}
+	a.mgr.Restart()
+	if err := a.mgr.WaitReady(runCtx); err != nil {
+		return fmt.Errorf("下载引擎重启超时：%v", err)
+	}
+	if len(running) > 0 {
+		if code, _, err := a.mgr.Call(runCtx, http.MethodPost, "/api/act", map[string]any{"action": "start", "ids": running}); err != nil || code != http.StatusOK {
+			log.Printf("[dir] resume %d tasks: code=%d err=%v", len(running), code, err)
+		}
+	}
+	log.Printf("[dir] download dir -> %s (resumed %d)", dir, len(running))
+	return nil
 }
 
 func validDownloadURL(u string) bool {
@@ -633,25 +747,11 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "请输入绝对路径，例如 /vol1/1000/downloads")
 		return
 	}
-	if err := prepareDownloadDir(dir); err != nil {
-		fail(w, http.StatusBadRequest, fmt.Sprintf("无法创建下载目录：%v", err))
+	if err := a.switchDownloadDir(r.Context(), dir); err != nil {
+		fail(w, http.StatusBadRequest, fmt.Sprintf("无法切换下载目录：%v", err))
 		return
 	}
-	probe := filepath.Join(dir, ".mdm-write-test")
-	if err := os.WriteFile(probe, []byte("ok"), 0600); err != nil {
-		fail(w, http.StatusBadRequest, fmt.Sprintf("下载目录不可写：%v", err))
-		return
-	}
-	_ = os.Remove(probe)
-	if err := a.auth.SetDownloadDir(dir); err != nil {
-		fail(w, http.StatusInternalServerError, "保存设置失败")
-		return
-	}
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		a.mgr.Restart()
-	}()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "download_dir": dir, "message": "已保存，下载引擎正在重启"})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "download_dir": dir, "message": "已保存"})
 }
 
 // 共享文件夹通常属于创建它的飞牛用户；应用以 root 运行时新建的目录沿用父目录属主，

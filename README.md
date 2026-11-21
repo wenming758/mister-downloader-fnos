@@ -10,7 +10,7 @@
 
 | 路径 | 说明 |
 | --- | --- |
-| `mister-downloader_1.0.3_x86.fpk` | 可直接安装的飞牛应用包（x86） |
+| `mister-downloader_1.0.4_x86.fpk` | 可直接安装的飞牛应用包（x86） |
 | `SHA256SUMS.txt` | 安装包与许可证文件的 SHA-256 |
 | `fpk/src/` | FPK 构建目录（manifest、生命周期脚本、网关入口、图标） |
 | `app/` | Go 适配层源码（登录/角色、下载引擎守护、网关反代、更新检测） |
@@ -22,11 +22,13 @@
 
 ## 安装
 
-1. 打开飞牛 fnOS 应用中心 → 手动安装，选择 `mister-downloader_1.0.3_x86.fpk`。
+1. 打开飞牛 fnOS 应用中心 → 手动安装，选择 `mister-downloader_1.0.4_x86.fpk`。
 2. 安装完成后，在桌面打开“Mister 下载器”（任意能打开应用的飞牛用户均可）。
 3. 首次打开会要求创建**应用管理员**（与飞牛系统账户相互独立），不限制飞牛账户身份。
-4. 登录后进入应用自带的下载面板：粘贴直链或磁力链接即可下载，顶部可切换“原版”MDM 页面；未登录时整个应用仅显示登录框，不暴露任何下载内容或接口。
-5. 在“设置”中填写下载目录，例如 `/vol2/1000/临时文件`，保存后引擎会自动重启。
+4. 登录后进入应用自带的**优化版**下载面板：粘贴直链或磁力链接即可下载；顶部按钮可切换到上游的**原生版** MDM 页面。未登录时整个应用仅显示登录框，不暴露任何下载内容或接口。
+5. 点击“添加下载”时会弹出对话框，可直接填写或修改**保存目录**（服务器绝对路径，如 `/vol2/1000/临时文件`）；目录不存在会自动创建。更换目录时引擎重启一次，运行中的任务会自动继续。
+6. 任务卡片的“删除”会先暂停任务，再彻底清除磁盘上已下载的部分（含 `.mdm.part`、`.mdm.json`），不可恢复。
+7. 在“设置”中可修改默认下载目录，保存后同样会重启引擎。
 
 ### 账户与密码
 
@@ -52,7 +54,7 @@
 - 下载引擎以 `--headless` 方式运行，只依赖 `libc`/`libm`/`libgcc_s`（需要 glibc ≥ 2.35，fnOS 1.x 满足）；Go 适配层为静态链接。
 - 应用进程启动时会清理 `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`，避免 NAS 上的代理变量影响下载速度或导致下载卡住。
 - 适配层会自动完成“应用 ↔ 下载引擎”的配对并持久化令牌，用户无需手动输入配对码。
-- 下载面板由应用自身实现，直接调用引擎接口（`/fnapi/tasks`），不依赖内嵌原版页面；原版页面仍保留为可选视图，其 `Content-Security-Policy`/`X-Frame-Options` 由适配层剥离并改写 Host/Origin；`/api/forget`（解绑设备）被禁止，避免破坏自动配对。
+- 下载面板由应用自身实现，直接调用引擎接口（`/fnapi/tasks`），不依赖内嵌原版页面；上游页面仍保留为可选的“原生版”视图，其 `Content-Security-Policy`/`X-Frame-Options` 由适配层剥离并改写 Host/Origin；`/api/forget`（解绑设备）被禁止，避免破坏自动配对。
 - 面板请求日志写在 `logs/server.log`：只记录失败、慢请求和面板首页加载，便于在设备上排查“引擎没有响应”。
 
 ## 更新
@@ -80,8 +82,8 @@ chmod 0755 ../fpk/src/app/{mdm-fnos-server,misterdownloadmanager,misterdownloadm
 cd ../fpk
 fnpack build -d src
 cd ..
-python tools/patch-fpk.py fpk/mister-downloader.fpk mister-downloader_1.0.3_x86.fpk
-sha256sum mister-downloader_1.0.3_x86.fpk
+python tools/patch-fpk.py fpk/mister-downloader.fpk mister-downloader_1.0.4_x86.fpk
+sha256sum mister-downloader_1.0.4_x86.fpk
 ```
 
 上游 Linux 发行包获取：<https://github.com/anefzaoui/misterdownloadmanager/releases/tag/v0.5.2>（文件 `MisterDownloadManager-0.5.2-linux-x86_64.tar.gz`）。
@@ -90,12 +92,14 @@ Windows 下 `fnpack` 会把文件写成 `0666` 且不会更新 `checksum`，因�
 
 ## 验证状态
 
-- 适配层已在本机用同一版本的上游 0.5.2 `--headless` 引擎完成端到端验证：首次初始化、错误/正确密码登录、原生面板加载、添加任务（HTTP 直链与磁力链接）、暂停/继续/移除、文件落盘并校验、修改下载目录后重启、角色限制、CSRF 头校验、配对令牌自动恢复。
+- 适配层已在本机用同一版本的上游 0.5.2 `--headless` 引擎完成端到端验证：首次初始化、错误/正确密码登录、原生面板加载、添加任务（HTTP 直链与磁力链接）、暂停/继续/彻底删除、文件落盘并校验、修改下载目录后重启并且运行中任务自动继续、角色限制、CSRF 头校验、配对令牌自动恢复。
+- 1.0.4 变更点均已实测：下载中直接“删除”会在约 5 秒内清掉任务与 `.mdm.part`/`.mdm.json`；添加下载时可选择新目录，引擎重启并把运行中的任务续传；空目录场景会先确认再写入；同一目录保存不会重启引擎；界面按钮显示“优化版/原生版”，默认优化版。
 - FPK 已用 `fnpack` 1.2.3 构建并校验：`platform=x86`、`checksum` 等于实际 `app.tgz` 的 MD5、`cmd/*` 与三个二进制均为 `0755`、全部 ELF 为 x86-64。
-- **尚未在真实飞牛设备上重新安装 1.0.3 验证**。若原生面板仍提示引擎未就绪，请提供应用数据目录下 `logs/server.log`（已包含面板请求与引擎配对记录）。
+- **尚未在真实飞牛设备上重新安装 1.0.4 验证**。若原生面板仍提示引擎未就绪，请提供应用数据目录下 `logs/server.log`（已包含面板请求与引擎配对记录）。
 
 ## 许可与署名
 
+- 应用信息中的**开发者**为上游原作者：Ahmed Nefzaoui（<https://github.com/anefzaoui>）；**发布者**为本项目打包者：wenming758 / wenming760。
 - 上游：Mister Download Manager 0.5.2，作者 anefzaoui，GPL-3.0。
 - 随包文件：`licenses/LICENSE`、`licenses/ATTRIBUTION.md`、`licenses/SOURCE.txt`、`licenses/upstream-source-0.5.2.tar.gz`。
 - 上游源码：<https://github.com/anefzaoui/misterdownloadmanager>

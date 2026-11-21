@@ -153,6 +153,27 @@ func (m *Manager) Call(ctx context.Context, method, path string, body any) (int,
 	return res.StatusCode, raw, nil
 }
 
+// WaitReady 等到引擎能够正常应答任务列表（重启后调用）。
+func (m *Manager) WaitReady(ctx context.Context) error {
+	var last error
+	for {
+		code, _, err := m.Call(ctx, http.MethodGet, "/api/list", nil)
+		if err == nil && code == http.StatusOK {
+			return nil
+		}
+		if err != nil {
+			last = err
+		} else {
+			last = fmt.Errorf("引擎返回 HTTP %d", code)
+		}
+		select {
+		case <-ctx.Done():
+			return last
+		case <-time.After(400 * time.Millisecond):
+		}
+	}
+}
+
 func (m *Manager) Token() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
