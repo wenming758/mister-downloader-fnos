@@ -1,0 +1,46 @@
+PASS 外层包含 manifest
+PASS 外层包含 ICON.PNG
+PASS 外层包含 ICON_256.PNG
+PASS 外层包含 app.tgz
+PASS 外层包含 config/privilege
+PASS 外层包含 config/resource
+PASS cmd/config_init 存在且 0755
+PASS cmd/config_callback 存在且 0755
+PASS cmd/install_init 存在且 0755
+PASS cmd/install_callback 存在且 0755
+PASS cmd/upgrade_init 存在且 0755
+PASS cmd/upgrade_callback 存在且 0755
+PASS cmd/uninstall_init 存在且 0755
+PASS cmd/uninstall_callback 存在且 0755
+PASS cmd/main 存在且 0755
+PASS manifest 为 LF 换行
+PASS appname
+PASS version=1.0.3
+PASS platform=x86
+PASS applaunch
+PASS desktop_uidir
+PASS checksum == app.tgz MD5
+PASS privilege run-as root
+PASS privilege username
+PASS ICON.PNG 64x64
+PASS ICON_256.PNG 256x256
+PASS mdm-fnos-server 存在、非空、0755
+PASS mdm-fnos-server ELF64 x86-64
+PASS misterdownloadmanager 存在、非空、0755
+PASS misterdownloadmanager ELF64 x86-64
+PASS misterdownloadmanager-cli 存在、非空、0755
+PASS misterdownloadmanager-cli ELF64 x86-64
+PASS 包含 licenses/LICENSE
+PASS 包含 licenses/ATTRIBUTION.md
+PASS 包含 licenses/SOURCE.txt
+PASS 包含 licenses/upstream-source-0.5.2.tar.gz
+PASS 包含 ui/config
+PASS 网关前缀
+PASS 网关 Socket
+PASS 所有用户可见
+PASS 内置原生下载面板
+PASS 应用内确认弹窗
+PASS 下载目录设置接口
+
+RESULT: OK
+sha256: 4fdfd71c55163ee0fbec6a9d4bafad0f1b3bf06d0fa5fec6e76f036ee98158e4 size: 52357993

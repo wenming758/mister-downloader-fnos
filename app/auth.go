@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	roleAdmin    = "admin"
-	roleOperator = "operator"
+	roleAdmin     = "admin"
+	roleOperator  = "operator"
 	sessionCookie = "mdm_fnos_session"
 	pbkdf2Rounds  = 210000
 	sessionTTL    = 7 * 24 * time.Hour

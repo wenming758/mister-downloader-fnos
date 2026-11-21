@@ -113,11 +113,44 @@ func (m *Manager) buildProxy() *httputil.ReverseProxy {
 		return nil
 	}
 	p.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("[panel] %s %s -> upstream error: %v", r.Method, r.URL.Path, err)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusBadGateway)
 		fmt.Fprintf(w, "下载引擎暂未就绪：%v\n请稍后刷新，或在“设置”中查看服务日志。", err)
 	}
 	return p
+}
+
+// Call 带令牌访问下载引擎自身的远端接口，供原生面板使用。
+func (m *Manager) Call(ctx context.Context, method, path string, body any) (int, []byte, error) {
+	var rdr io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return 0, nil, err
+		}
+		rdr = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, m.target.String()+path, rdr)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Host = m.target.Host
+	req.Header.Set("Origin", "https://"+m.target.Host)
+	req.Header.Set("Authorization", "Bearer "+m.Token())
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	res, err := m.client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer res.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, 8<<20))
+	if err != nil {
+		return res.StatusCode, nil, err
+	}
+	return res.StatusCode, raw, nil
 }
 
 func (m *Manager) Token() string {
@@ -230,6 +263,7 @@ func (m *Manager) supervise(ctx context.Context) {
 			} else {
 				m.setErr("")
 				backoff = 3 * time.Second
+				log.Printf("[mdm] engine ready, remote api paired")
 			}
 		} else if ctx.Err() == nil {
 			m.setErr("下载引擎启动超时，请查看服务日志。")

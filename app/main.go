@@ -21,7 +21,7 @@ import (
 const (
 	appID           = "mister-downloader"
 	appDisplayName  = "Mister 下载器"
-	appVersion      = "1.0.2"
+	appVersion      = "1.0.3"
 	upstreamVersion = "0.5.2"
 )
 
@@ -144,6 +144,21 @@ func (a *App) routes() http.Handler {
 				http.Error(w, "内部错误", http.StatusInternalServerError)
 			}
 		}()
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		w = rec
+		defer func() {
+			p := r.URL.Path
+			if !strings.HasPrefix(p, "/panel") && !strings.HasPrefix(p, "/fnapi/") {
+				return
+			}
+			code := rec.statusCode()
+			took := time.Since(start)
+			// 正常轮询不刷日志；失败、慢请求和面板首页加载都记下来，方便在设备上排查。
+			if code >= 400 || took > 3*time.Second || p == "/panel/" || strings.HasSuffix(p, "/panel/") || p == "/panel" {
+				log.Printf("[req] %s %s -> %d (%s)", r.Method, p, code, took.Round(time.Millisecond))
+			}
+		}()
 		if strings.HasPrefix(r.URL.Path, prefix) {
 			if r.URL.Path == prefix {
 				http.Redirect(w, r, prefix+"/", http.StatusTemporaryRedirect)
@@ -160,6 +175,40 @@ func (a *App) routes() http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+}
+
+func (r *statusRecorder) WriteHeader(c int) {
+	if r.code == 0 {
+		r.code = c
+	}
+	r.ResponseWriter.WriteHeader(c)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.code == 0 {
+		r.code = http.StatusOK
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+func (r *statusRecorder) statusCode() int {
+	if r.code == 0 {
+		return http.StatusOK
+	}
+	return r.code
 }
 
 func (a *App) commonHeaders(w http.ResponseWriter) {
@@ -300,6 +349,10 @@ func (a *App) handleAPI(w http.ResponseWriter, r *http.Request) {
 		a.apiInit(w, r)
 	case "/fnapi/status":
 		a.apiStatus(w, r)
+	case "/fnapi/tasks":
+		a.apiTasks(w, r)
+	case "/fnapi/tasks/act":
+		a.apiTasksAct(w, r)
 	case "/fnapi/settings":
 		a.apiSettings(w, r)
 	case "/fnapi/users":
@@ -435,6 +488,132 @@ func (a *App) apiStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+// 原生面板直接调用下载引擎的接口，不依赖上游页面与内嵌 iframe。
+func (a *App) apiTasks(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.requireUser(w, r, false); !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	switch r.Method {
+	case http.MethodGet:
+		code, raw, err := a.mgr.Call(ctx, http.MethodGet, "/api/list", nil)
+		if err != nil {
+			log.Printf("[tasks] list: %v", err)
+			fail(w, http.StatusServiceUnavailable, "下载引擎暂未就绪，请稍后重试")
+			return
+		}
+		if code != http.StatusOK {
+			fail(w, http.StatusServiceUnavailable, engineMessage(code))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(raw)
+	case http.MethodPost:
+		var in struct {
+			URL   string `json:"url"`
+			Start *bool  `json:"start"`
+		}
+		if !decodeJSON(w, r, &in) {
+			return
+		}
+		u := strings.TrimSpace(in.URL)
+		if !validDownloadURL(u) {
+			fail(w, http.StatusBadRequest, "请粘贴 http(s) 或 magnet 开头的下载地址")
+			return
+		}
+		start := true
+		if in.Start != nil {
+			start = *in.Start
+		}
+		code, raw, err := a.mgr.Call(ctx, http.MethodPost, "/api/add", map[string]any{"url": u, "start": start})
+		if err != nil {
+			log.Printf("[tasks] add: %v", err)
+			fail(w, http.StatusServiceUnavailable, "下载引擎暂未就绪，请稍后重试")
+			return
+		}
+		if code != http.StatusOK {
+			fail(w, http.StatusBadRequest, engineMessage(code))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(raw)
+	default:
+		fail(w, http.StatusMethodNotAllowed, "方法不允许")
+	}
+}
+
+func (a *App) apiTasksAct(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "方法不允许")
+		return
+	}
+	if _, ok := a.requireUser(w, r, false); !ok {
+		return
+	}
+	var in struct {
+		Action string   `json:"action"`
+		IDs    []uint64 `json:"ids"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	switch in.Action {
+	case "pause", "start", "remove", "delete":
+	default:
+		fail(w, http.StatusBadRequest, "不支持的操作")
+		return
+	}
+	if len(in.IDs) == 0 || len(in.IDs) > 1000 {
+		fail(w, http.StatusBadRequest, "缺少任务编号")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	code, raw, err := a.mgr.Call(ctx, http.MethodPost, "/api/act", map[string]any{"action": in.Action, "ids": in.IDs})
+	if err != nil {
+		log.Printf("[tasks] act %s: %v", in.Action, err)
+		fail(w, http.StatusServiceUnavailable, "下载引擎暂未就绪，请稍后重试")
+		return
+	}
+	if code != http.StatusOK {
+		fail(w, http.StatusBadRequest, engineMessage(code))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}
+
+func validDownloadURL(u string) bool {
+	if u == "" || len(u) > 8192 {
+		return false
+	}
+	l := strings.ToLower(u)
+	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") ||
+		strings.HasPrefix(l, "magnet:?") || strings.HasPrefix(l, "ftp://")
+}
+
+func engineMessage(code int) string {
+	switch code {
+	case http.StatusUnauthorized:
+		return "下载引擎尚未完成配对，请点击“重启引擎”后再试"
+	case http.StatusForbidden, http.StatusMisdirectedRequest:
+		return "下载引擎拒绝了请求，请重启引擎后再试"
+	case http.StatusBadRequest:
+		return "下载地址无效，请检查后重试"
+	case http.StatusConflict:
+		return "下载引擎正忙，请稍后再试"
+	default:
+		return fmt.Sprintf("下载引擎返回错误（HTTP %d），请查看服务日志", code)
+	}
+}
+
 func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		fail(w, http.StatusMethodNotAllowed, "方法不允许")
@@ -454,7 +633,7 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "请输入绝对路径，例如 /vol1/1000/downloads")
 		return
 	}
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	if err := prepareDownloadDir(dir); err != nil {
 		fail(w, http.StatusBadRequest, fmt.Sprintf("无法创建下载目录：%v", err))
 		return
 	}
@@ -473,6 +652,26 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 		a.mgr.Restart()
 	}()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "download_dir": dir, "message": "已保存，下载引擎正在重启"})
+}
+
+// 共享文件夹通常属于创建它的飞牛用户；应用以 root 运行时新建的目录沿用父目录属主，
+// 保证用户在“文件”里也能正常浏览。
+func prepareDownloadDir(dir string) error {
+	if st, err := os.Stat(dir); err == nil {
+		if !st.IsDir() {
+			return fmt.Errorf("%s 不是目录", dir)
+		}
+		return nil
+	}
+	parent := filepath.Dir(dir)
+	uid, gid, hasOwner := dirOwner(parent)
+	if err := os.MkdirAll(dir, 0775); err != nil {
+		return err
+	}
+	if hasOwner {
+		adoptOwner(dir, uid, gid)
+	}
+	return nil
 }
 
 func (a *App) apiUsers(w http.ResponseWriter, r *http.Request) {
