@@ -235,6 +235,9 @@
   .meta { display: flex; gap: 6px 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); font-weight: 600; }
   .meta b { color: var(--ink); font-weight: 800; }
   .meta .errtext { color: var(--bad); }
+  .del-opts { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink); opacity: .85; }
+  .del-opts b { color: var(--ink); }
+  #del-name { color: var(--ink); font-size: 14px; font-weight: 800; word-break: break-all; }
   .hint { font-size: 12px; line-height: 1.7; color: #9a5a00; background: #fff6dd; border: 2px dashed #e2b34d; border-radius: 12px; padding: 8px 10px; }
   .acts { display: flex; gap: 8px; flex-wrap: wrap; }
   .acts .btn { padding: 6px 12px; font-size: 12.5px; border-width: 2px; border-radius: 11px; box-shadow: 2px 2px 0 var(--ink); }
@@ -285,6 +288,17 @@
   .upd-banner { background: color-mix(in srgb, var(--mint) 55%, transparent); border: 2px solid var(--ink); border-radius: 14px; padding: 10px 12px; font-weight: 800; font-size: 13px; margin-bottom: 12px; }
   .upd-banner.neutral { background: color-mix(in srgb, var(--ink) 8%, var(--paper-2)); }
   .upd-banner.bad { background: var(--rose); }
+  .upd-sep { border: 0; border-top: 2px dashed color-mix(in srgb, var(--ink) 28%, transparent); margin: 18px 0 14px; }
+  .upd-sub { font-weight: 900; font-size: 14.5px; margin-bottom: 10px; }
+  .upd-sub small { font-weight: 600; font-size: 12px; opacity: .65; margin-left: 6px; }
+  .hist-list { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow: auto; }
+  .hist-row { border: 2px solid var(--ink); border-radius: 12px; padding: 8px 10px; background: var(--paper-2); display: flex; flex-direction: column; gap: 5px; }
+  .hist-top { display: flex; align-items: center; gap: 8px; }
+  .hist-name { flex: 1; min-width: 0; font-weight: 800; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; font-weight: 600; opacity: .75; }
+  .hist-meta.errtext { color: var(--bad); opacity: 1; }
+  .hist-row .row { margin-top: 2px; }
+  #dlg-history { width: min(680px, calc(100vw - 28px)); }
   .task .acts .btn { padding: 6px 12px; font-size: 12.5px; }
   .task.pending { border-style: dashed; background: color-mix(in srgb, var(--sky) 22%, var(--card)); }
   .task.pending.err { background: color-mix(in srgb, var(--rose) 35%, var(--card)); }
@@ -373,7 +387,7 @@
     </form>
 
     <div class="hint" id="gate-hint" hidden></div>
-    <div class="gate-foot">版本 <span id="gate-ver">1.0.9</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
+    <div class="gate-foot">版本 <span id="gate-ver">1.0.10</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
   </div>
 </div>
 
@@ -387,6 +401,10 @@
     <button class="tbtn" id="btn-refresh" title="立即刷新任务与进度">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.5 3.5v6h-6"/></svg>
       <span class="label">刷新</span>
+    </button>
+    <button class="tbtn" id="btn-history" title="查看下载记录">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+      <span class="label">记录</span>
     </button>
     <button class="tbtn" id="btn-update" title="检查更新">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
@@ -454,7 +472,27 @@
       <a class="btn" id="upd-open" href="#" target="_blank" rel="noopener">前往 Gitee 下载</a>
       <a class="btn" id="upd-fpk" href="#" target="_blank" rel="noopener" hidden>直接下载安装包</a>
     </div>
-    <p style="margin-top:12px">“立即升级”会在应用内下载并校验安装包，随后调用飞牛应用中心完成安装并自动重启；升级期间下载中的任务会自动继续。按钮显示“已是最新版本”时说明当前版本不需要升级。</p>
+    <p style="margin-top:12px">“立即升级”会下载并校验 Gitee 发布的新版程序，替换文件后自动重启；下载中的任务会在重启后继续，全过程不再依赖飞牛应用中心。</p>
+    <hr class="upd-sep">
+    <div class="upd-sub">内核升级 <small>上游下载引擎 · GitHub 原作者发布</small></div>
+    <div id="eng-banner" class="upd-banner neutral hidden"></div>
+    <div class="kv">
+      <b>当前内核</b><span id="eng-current"></span>
+      <b>最新内核</b><span id="eng-latest">—</span>
+      <b>更新源</b><span id="eng-source"></span>
+      <b>检查时间</b><span id="eng-time">—</span>
+    </div>
+    <div class="notes" id="eng-notes">尚未检查。</div>
+    <div class="upd-progress hidden" id="eng-progress">
+      <div class="upd-bar"><i class="upd-fill" id="eng-fill"></i></div>
+      <div class="upd-stage"><span id="eng-stage">准备升级…</span><span class="pct" id="eng-pct"></span></div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn primary" id="eng-apply" disabled>升级内核</button>
+      <button class="btn" id="eng-recheck">检查内核</button>
+      <a class="btn" id="eng-open" href="#" target="_blank" rel="noopener">前往 GitHub 下载</a>
+    </div>
+    <p style="margin-top:12px">内核升级只替换上游引擎二进制，账户、保存目录和任务列表保持不变；升级期间下载会短暂暂停，完成后自动继续。</p>
   </div>
 </dialog>
 
@@ -543,6 +581,22 @@
   </div>
 </dialog>
 
+<dialog id="dlg-del">
+  <div class="dlg-body">
+    <h3 class="ctitle">删除下载</h3>
+    <p id="del-name"></p>
+    <div class="del-opts">
+      <p><b>删除下载</b>：从列表移除任务，磁盘上已下载的文件保留。</p>
+      <p><b>无痕删除</b>：删除任务与下载记录，并清除磁盘上全部文件（含未完成的分片和临时文件），不留痕迹。</p>
+    </div>
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn" id="del-cancel">取消</button>
+      <button class="btn" id="del-keep">删除下载</button>
+      <button class="btn danger" id="del-wipe">无痕删除</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog id="dlg-about">
   <div class="dlg-head"><h3>关于</h3><button class="btn ghost x" data-close="dlg-about">关闭</button></div>
   <div class="dlg-body">
@@ -557,6 +611,17 @@
       <b>Gitee</b><span><a href="https://gitee.com/wenming760/mister-downloader-fnos" target="_blank" rel="noopener">gitee.com/wenming760/mister-downloader-fnos</a></span>
     </div>
     <p>MDM 的开发者是 GitHub 原作者 Ahmed Nefzaoui；本应用不是 MDM 官方发行版，由社区（wenming758 / wenming760）封装为飞牛原生应用，仅做服务包装、登录门禁、优化版界面与更新入口。</p>
+  </div>
+</dialog>
+
+<dialog id="dlg-history">
+  <div class="dlg-head"><h3>下载记录</h3><button class="btn ghost x" data-close="dlg-history">关闭</button></div>
+  <div class="dlg-body">
+    <div class="notes hidden" id="hist-empty">暂无下载记录。开始下载后，任务会自动记录在这里。</div>
+    <div class="hist-list" id="hist-list"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn" id="hist-clear">清空记录</button>
+    </div>
   </div>
 </dialog>
 
@@ -631,6 +696,23 @@
   $('confirm-yes').addEventListener('click', function () { settleConfirm(true); });
   $('confirm-no').addEventListener('click', function () { settleConfirm(false); });
   $('dlg-confirm').addEventListener('close', function () { settleConfirm(false); });
+
+  var delResolve = null;
+  function askDelete(name) {
+    $('del-name').textContent = '“' + name + '”';
+    $('dlg-del').showModal();
+    return new Promise(function (resolve) { delResolve = resolve; });
+  }
+  function settleDelete(choice) {
+    var r = delResolve;
+    delResolve = null;
+    if ($('dlg-del').open) $('dlg-del').close();
+    if (r) r(choice);
+  }
+  $('del-cancel').addEventListener('click', function () { settleDelete(''); });
+  $('del-keep').addEventListener('click', function () { settleDelete('remove'); });
+  $('del-wipe').addEventListener('click', function () { settleDelete('wipe'); });
+  $('dlg-del').addEventListener('close', function () { settleDelete(''); });
 
   function showGate(mode, message) {
     $('shell').classList.remove('show');
@@ -934,6 +1016,23 @@
     });
   }
 
+  function runAct(t, action, btn) {
+    btn.disabled = true;
+    return api('tasks/act', { body: { action: action, ids: [t.id] } }).then(function (r) {
+      var skipped = (r && r.skipped) || [];
+      if (skipped.length) {
+        toast(actReason(skipped[0].why), true);
+        pollTasks();
+        return;
+      }
+      toast(action === 'remove' ? '已从列表删除，磁盘文件保留'
+        : action === 'wipe' ? '已无痕删除，文件与记录均已清除'
+        : action === 'pause' ? '已暂停' : '已开始');
+      pollTasks();
+    }).catch(function (e) { toast(e.message, true); })
+      .finally(function () { btn.disabled = false; });
+  }
+
   function newButton(label, action, cls, confirmText, getTask) {
     var b = document.createElement('button');
     b.type = 'button';
@@ -942,27 +1041,13 @@
     b.addEventListener('click', function () {
       var t = getTask();
       if (!t) return;
-      var run = function () {
-        b.disabled = true;
-        api('tasks/act', { body: { action: action, ids: [t.id] } }).then(function (r) {
-          var skipped = (r && r.skipped) || [];
-          if (skipped.length) {
-            toast(actReason(skipped[0].why), true);
-            pollTasks();
-            return;
-          }
-          toast(action === 'remove' ? '已删除任务和文件' : action === 'pause' ? '已暂停' : '已开始');
-          pollTasks();
-        }).catch(function (e) { toast(e.message, true); })
-          .finally(function () { b.disabled = false; });
-      };
       if (!confirmText) {
-        run();
+        runAct(t, action, b);
         return;
       }
       var text = typeof confirmText === 'function' ? confirmText(t) : confirmText;
       askConfirm(text, cls === 'danger').then(function (ok) {
-        if (ok) run();
+        if (ok) runAct(t, action, b);
       });
     });
     return b;
@@ -1009,9 +1094,17 @@
     var getTask = function () { return card.task; };
     card.btnPause = newButton('暂停', 'pause', '', '', getTask);
     card.btnStart = newButton('继续', 'start', '', '', getTask);
-    card.btnDelete = newButton('删除', 'remove', 'danger', function (t) {
-      return '删除“' + (t.file || ('任务 #' + t.id)) + '”并清除磁盘上已下载的部分？此操作不可恢复。';
-    }, getTask);
+    card.btnDelete = document.createElement('button');
+    card.btnDelete.type = 'button';
+    card.btnDelete.className = 'btn danger';
+    card.btnDelete.textContent = '删除';
+    card.btnDelete.addEventListener('click', function () {
+      var t = card.task;
+      if (!t) return;
+      askDelete(t.file || ('任务 #' + t.id)).then(function (choice) {
+        if (choice) runAct(t, choice, card.btnDelete);
+      });
+    });
     [card.btnPause, card.btnStart, card.btnDelete].forEach(function (b) {
       card.acts.appendChild(b);
     });
@@ -1277,7 +1370,7 @@
           toast(st.error || '升级失败', true);
         } else if (st.state === 'installing' && updateTries > 280) {
           stopUpdatePoll();
-          $('upd-stage').textContent = '安装超过 4 分钟仍未完成：请重启应用后重试，或到应用中心手动安装（更新包在应用数据目录 updates/ 下）';
+          $('upd-stage').textContent = '升级超过 4 分钟仍未完成：请重新打开应用；若版本未变化，请到 Gitee 下载安装包手动安装。';
           $('upd-pct').textContent = '';
           $('upd-recheck').disabled = false;
         }
@@ -1324,10 +1417,17 @@
     }
     state.updateInfo = u;
     $('upd-recheck').disabled = false;
-    $('upd-badge').classList.toggle('hidden', !(u.has_update && !u.error));
+    syncBadge();
+  }
+
+  function syncBadge() {
+    var p = state.updateInfo && state.updateInfo.has_update && !state.updateInfo.error;
+    var k = state.engineInfo && state.engineInfo.has_update && !state.engineInfo.error;
+    $('upd-badge').classList.toggle('hidden', !(p || k));
   }
 
   function checkUpdate(force) {
+    checkEngine(force);
     api('update' + (force ? '?force=1' : '')).then(function (u) {
       $('upd-current').textContent = 'v' + u.current;
       $('upd-latest').textContent = u.latest ? u.latest : '—';
@@ -1361,6 +1461,136 @@
       syncUpdateControls(state.updateInfo);
     });
   });
+
+  /* ---------------- 内核升级 ---------------- */
+  var enginePolling = null;
+  var engineTries = 0;
+
+  function renderEngineProgress(st) {
+    var box = $('eng-progress');
+    var fill = $('eng-fill');
+    var stage = $('eng-stage');
+    var pct = $('eng-pct');
+    if (!st || !st.state || st.state === 'idle' || st.state === 'done') {
+      box.classList.add('hidden');
+      return;
+    }
+    box.classList.remove('hidden');
+    var p = typeof st.percent === 'number' ? st.percent : 0;
+    fill.classList.toggle('busy', p <= 0);
+    fill.style.width = Math.max(0, Math.min(100, p)) + '%';
+    stage.textContent = st.message || '准备升级…';
+    pct.textContent = p > 0 ? p + '%' : '';
+    if (st.state === 'error') {
+      stage.textContent = st.error || st.message || '内核升级失败';
+      fill.classList.remove('busy');
+      pct.textContent = '';
+    }
+  }
+
+  function stopEnginePoll() {
+    if (enginePolling) { clearInterval(enginePolling); enginePolling = null; }
+  }
+
+  function startEnginePoll() {
+    stopEnginePoll();
+    engineTries = 0;
+    $('eng-apply').disabled = true;
+    $('eng-apply').textContent = '升级中…';
+    $('eng-recheck').disabled = true;
+    renderEngineProgress({ state: 'downloading', percent: 1, message: '正在下载内核包…' });
+    enginePolling = setInterval(function () {
+      engineTries++;
+      api('engine/status').then(function (st) {
+        renderEngineProgress(st);
+        if (st.state === 'done') {
+          stopEnginePoll();
+          toast('内核已升级到 v' + (st.target || ''));
+          setTimeout(function () { location.reload(); }, 1200);
+        } else if (st.state === 'error') {
+          stopEnginePoll();
+          syncEngineControls(state.engineInfo);
+          toast(st.error || '内核升级失败', true);
+        }
+      }).catch(function () {
+        renderEngineProgress({ state: 'installing', percent: 0, message: '下载引擎正在重启，等待恢复…' });
+        if (engineTries > 200) {
+          stopEnginePoll();
+          $('eng-stage').textContent = '等待下载引擎恢复超时，请重新打开应用';
+          $('eng-recheck').disabled = false;
+        }
+      });
+    }, 1200);
+  }
+
+  function syncEngineControls(e) {
+    var btn = $('eng-apply');
+    var banner = $('eng-banner');
+    btn.hidden = false;
+    banner.classList.remove('hidden', 'bad', 'neutral');
+    if (!e) {
+      btn.disabled = true;
+      btn.textContent = '升级内核';
+      return;
+    }
+    var ver = e.latest || '';
+    if (e.error) {
+      btn.disabled = true;
+      btn.textContent = '暂时无法升级';
+      banner.textContent = e.error;
+      banner.classList.add('bad');
+    } else if (e.has_update && e.asset) {
+      btn.disabled = false;
+      btn.textContent = '升级到 ' + ver;
+      banner.textContent = '上游有新内核 ' + ver + '，升级只替换引擎文件。';
+    } else if (e.has_update) {
+      btn.disabled = true;
+      btn.textContent = '内核包缺失';
+      banner.textContent = '发现新内核 ' + ver + '，但发布里没有 Linux x86_64 包。';
+    } else {
+      btn.disabled = true;
+      btn.textContent = '已是最新内核';
+      banner.textContent = '当前内核 v' + e.current + ' 已是最新。';
+      banner.classList.add('neutral');
+    }
+    state.engineInfo = e;
+    $('eng-recheck').disabled = false;
+    syncBadge();
+  }
+
+  function checkEngine(force) {
+    return api('engine' + (force ? '?force=1' : '')).then(function (e) {
+      $('eng-current').textContent = 'v' + (e.current || '');
+      $('eng-latest').textContent = e.latest ? e.latest : '—';
+      $('eng-source').textContent = e.source;
+      $('eng-time').textContent = e.checked_at ? new Date(e.checked_at * 1000).toLocaleString() : '—';
+      $('eng-notes').textContent = e.error ? e.error : (e.notes || '（本次发布没有填写更新说明）');
+      $('eng-open').href = e.url || e.source;
+      syncEngineControls(e);
+      return api('engine/status');
+    }).then(function (st) {
+      if (st && (st.state === 'downloading' || st.state === 'verifying' || st.state === 'installing')) {
+        startEnginePoll();
+      }
+    }).catch(function (err) {
+      syncEngineControls(null);
+      $('eng-notes').textContent = err.message || '检查内核更新失败';
+    });
+  }
+
+  $('eng-apply').addEventListener('click', function () {
+    var btn = $('eng-apply');
+    btn.disabled = true;
+    api('engine/apply', { body: {} }).then(function (r) {
+      toast('已开始升级内核到 ' + r.target);
+      startEnginePoll();
+    }).catch(function (e) {
+      toast(e.message, true);
+      syncEngineControls(state.engineInfo);
+    });
+  });
+
+  $('eng-recheck').addEventListener('click', function () { checkEngine(true); });
 
   /* ---------------- 登录 / 初始化 ---------------- */
   $('login-form').addEventListener('submit', function (ev) {
@@ -1432,11 +1662,103 @@
     });
   });
 
+  /* ---------------- 下载记录 ---------------- */
+  var HIST_LABEL = {
+    Queued: '排队中', Connecting: '连接中', Downloading: '下载中',
+    Stopped: '已暂停', Complete: '已完成', Error: '出错', Removed: '已删除'
+  };
+  var histBusy = false;
+
+  function histTime(ts) {
+    return ts ? new Date(ts * 1000).toLocaleString() : '—';
+  }
+
+  function openHistory() {
+    $('hist-list').textContent = '';
+    $('hist-empty').classList.add('hidden');
+    $('dlg-history').showModal();
+    loadHistory();
+  }
+
+  function loadHistory() {
+    if (histBusy) return;
+    histBusy = true;
+    api('history').then(function (r) {
+      renderHistory((r && r.entries) || []);
+    }).catch(function (e) {
+      toast(e.message || '读取下载记录失败', true);
+    }).finally(function () { histBusy = false; });
+  }
+
+  function renderHistory(list) {
+    var box = $('hist-list');
+    box.textContent = '';
+    $('hist-empty').classList.toggle('hidden', list.length > 0);
+    list.forEach(function (h) {
+      var row = document.createElement('div');
+      row.className = 'hist-row';
+
+      var top = document.createElement('div');
+      top.className = 'hist-top';
+      var name = document.createElement('div');
+      name.className = 'hist-name';
+      name.textContent = h.name || h.url || ('任务 ' + h.id);
+      if (h.name && h.name !== h.url && h.url) name.title = h.url;
+      var pill = document.createElement('span');
+      pill.className = 'pill ' + (STATUS_CLASS[h.status] || '');
+      pill.textContent = HIST_LABEL[h.status] || h.status || '';
+      top.appendChild(name);
+      top.appendChild(pill);
+      row.appendChild(top);
+
+      var meta = document.createElement('div');
+      meta.className = 'hist-meta';
+      if (h.size > 0) meta.appendChild(metaItem(sizeText(h.downloaded || 0) + ' / ' + sizeText(h.size)));
+      else if (h.downloaded > 0) meta.appendChild(metaItem('已下载 ' + sizeText(h.downloaded)));
+      if (h.added_at) meta.appendChild(metaItem('添加于 ' + histTime(h.added_at)));
+      if (h.path) meta.appendChild(metaItem('目录 ' + h.path));
+      if (meta.children.length) row.appendChild(meta);
+
+      if (h.error && h.status === 'Error') {
+        var er = document.createElement('div');
+        er.className = 'hist-meta errtext';
+        er.textContent = h.error;
+        row.appendChild(er);
+      }
+
+      var actions = document.createElement('div');
+      actions.className = 'row';
+      var again = document.createElement('button');
+      again.className = 'btn ghost';
+      again.textContent = '再次下载';
+      again.disabled = !h.url;
+      again.addEventListener('click', function () {
+        $('dlg-history').close();
+        openAddDialog(h.url || '');
+      });
+      actions.appendChild(again);
+      row.appendChild(actions);
+
+      box.appendChild(row);
+    });
+  }
+
+  $('btn-history').addEventListener('click', openHistory);
+  $('hist-clear').addEventListener('click', function () {
+    askConfirm('清空全部下载记录？仅清除记录，不会删除已下载的文件。', true).then(function (ok) {
+      if (!ok) return;
+      api('history/clear', { body: {} }).then(function () {
+        toast('已清空下载记录');
+        loadHistory();
+      }).catch(function (e) { toast(e.message, true); });
+    });
+  });
+
   /* ---------------- 弹窗控制 ---------------- */
   document.querySelectorAll('[data-close]').forEach(function (b) {
     b.addEventListener('click', function () { $(b.dataset.close).close(); });
   });
-  ['dlg-update', 'dlg-settings', 'dlg-users', 'dlg-about', 'dlg-confirm', 'dlg-add'].forEach(function (id) {
+  ['dlg-update', 'dlg-settings', 'dlg-users', 'dlg-about', 'dlg-confirm', 'dlg-add', 'dlg-history', 'dlg-del'].forEach(function (id) {
     var d = $(id);
     d.addEventListener('click', function (ev) {
       if (ev.target === d) d.close();
@@ -1571,5 +1893,6 @@
   boot();
 })();
 </script>
+
 </body>
 </html>

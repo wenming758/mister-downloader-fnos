@@ -98,9 +98,17 @@ def main():
                 check("优化版".encode("utf-8") in blob and "原生版".encode("utf-8") in blob,
                       "优化版/原生版视图切换")
                 check(b"add-dlg-dir" in blob, "添加下载时选择保存目录")
-                check("已删除任务和文件".encode("utf-8") in blob, "删除任务并清除已下载文件")
-                check(b"appcenter-cli" in blob, "应用内升级调用应用中心")
+                check("删除下载".encode("utf-8") in blob and "磁盘上已下载的文件保留".encode("utf-8") in blob
+                      and "无痕删除".encode("utf-8") in blob, "删除下载/无痕删除双选项")
+                check(b".mdm.part" in blob and "未完成的分片".encode("utf-8") in blob,
+                      "无痕删除清理未完成分片")
+                check(b"appcenter-cli" not in blob and b"install-fpk" not in blob
+                      and b"update_resume.json" in blob, "应用内升级不再依赖应用中心")
                 check("立即升级".encode("utf-8") in blob and b"upd-fill" in blob, "升级进度条")
+                check(b"/fnapi/engine" in blob and "内核升级".encode("utf-8") in blob
+                      and b"SHA256SUMS.txt" in blob, "独立内核升级（上游 GitHub）")
+                check(b"history.json" in blob and "下载记录".encode("utf-8") in blob
+                      and "再次下载".encode("utf-8") in blob, "下载记录与再次下载")
                 check(b"dir-options" in blob and "dir_history".encode("utf-8") in blob, "下载目录历史")
                 check("已是最新版本".encode("utf-8") in blob, "更新按钮始终显示当前状态")
                 check(b"itorrents.org" in blob and b"tracker.opentrackr.org" in blob,
@@ -111,8 +119,8 @@ def main():
                 check(b"torrentWithTrackers" in blob and b"tracker.dler.com" in blob
                       and b"004430.xyz" in blob, "缓存种子写入磁力与公开 tracker")
                 check("迅雷等私有节点".encode("utf-8") in blob, "长时间零速度提示")
-                check(b"install_error.txt" in blob and b"timeout 240" in blob,
-                      "升级脚本先停应用并限时安装")
+                check("已升级到 v".encode("utf-8") in blob and b"backup-" in blob,
+                      "应用内升级可回滚自愈")
                 check(b"btn-refresh" in blob and "刷新".encode("utf-8") in blob, "顶部刷新按钮")
         check(fields.get("maintainer") == "Ahmed Nefzaoui", "开发者 = 上游原作者")
         check(fields.get("maintainer_url") == "https://github.com/anefzaoui", "开发者链接")

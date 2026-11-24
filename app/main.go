@@ -22,7 +22,7 @@ import (
 const (
 	appID           = "mister-downloader"
 	appDisplayName  = "Mister 下载器"
-	appVersion      = "1.0.9"
+	appVersion      = "1.0.10"
 	upstreamVersion = "0.5.2"
 )
 
@@ -33,7 +33,10 @@ type App struct {
 	auth     *Auth
 	mgr      *Manager
 	upd      *Updater
+	engChk   *EngineChecker
 	self     *SelfUpdater
+	eng      *EngineUpdater
+	hist     *History
 	dataRoot string
 	appDir   string
 	web      fs.FS
@@ -83,8 +86,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("读取内置页面失败: %v", err)
 	}
-	a := &App{auth: auth, mgr: mgr, upd: NewUpdater(), self: NewSelfUpdater(dataRoot), dataRoot: dataRoot, appDir: appDir, web: sub, pending: make(map[string]*PendingMagnet)}
+	a := &App{auth: auth, mgr: mgr, upd: NewUpdater(), engChk: NewEngineChecker(), self: NewSelfUpdater(appDir, dataRoot), hist: NewHistory(dataRoot), dataRoot: dataRoot, appDir: appDir, web: sub, pending: make(map[string]*PendingMagnet)}
+	a.eng = NewEngineUpdater(appDir, dataRoot, mgr)
+	a.self.beforeRestart = func() {
+		a.captureRunningForUpdate()
+		a.mgr.Stop()
+	}
+	a.self.onAbort = func() {
+		a.mgr.Start()
+		go a.resumeAfterUpdate(context.Background())
+	}
+	a.eng.onReady = func() { a.resumeAfterUpdate(context.Background()) }
 	a.self.Init()
+	a.eng.Init()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -360,6 +374,10 @@ func (a *App) handleAPI(w http.ResponseWriter, r *http.Request) {
 		a.apiTasks(w, r)
 	case "/fnapi/tasks/act":
 		a.apiTasksAct(w, r)
+	case "/fnapi/history":
+		a.apiHistory(w, r)
+	case "/fnapi/history/clear":
+		a.apiHistoryClear(w, r)
 	case "/fnapi/pending/dismiss":
 		a.apiPendingDismiss(w, r)
 	case "/fnapi/pending/retry":
@@ -374,6 +392,12 @@ func (a *App) handleAPI(w http.ResponseWriter, r *http.Request) {
 		a.apiUpdateStatus(w, r)
 	case "/fnapi/update/apply":
 		a.apiUpdateApply(w, r)
+	case "/fnapi/engine":
+		a.apiEngine(w, r)
+	case "/fnapi/engine/status":
+		a.apiEngineStatus(w, r)
+	case "/fnapi/engine/apply":
+		a.apiEngineApply(w, r)
 	case "/fnapi/logs":
 		a.apiLogs(w, r)
 	case "/fnapi/restart":
@@ -396,7 +420,7 @@ func (a *App) apiMe(w http.ResponseWriter, r *http.Request) {
 		"user":           map[string]string{"name": s.Name, "role": s.Role},
 		"initialized":    true,
 		"version":        appVersion,
-		"upstream":       upstreamVersion,
+		"upstream":       currentEngineVersion(a.dataRoot),
 		"download_dir":   a.mgr.dirFn(),
 		"dir_history":    a.auth.DirHistory(),
 		"data_dir":       a.dataRoot,
@@ -526,6 +550,7 @@ func (a *App) apiTasks(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
+		a.observeHistory(raw)
 		_, _ = w.Write(a.attachPending(raw))
 	case http.MethodPost:
 		var in struct {
@@ -608,6 +633,43 @@ func (a *App) apiTasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// observeHistory 把引擎任务列表同步到下载记录。
+func (a *App) observeHistory(raw []byte) {
+	var list struct {
+		Downloads []TaskView `json:"downloads"`
+	}
+	if json.Unmarshal(raw, &list) != nil {
+		return
+	}
+	a.hist.Observe(list.Downloads)
+}
+
+func (a *App) apiHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		fail(w, http.StatusMethodNotAllowed, "方法不允许")
+		return
+	}
+	if _, ok := a.requireUser(w, r, false); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": a.hist.Snapshot()})
+}
+
+func (a *App) apiHistoryClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "方法不允许")
+		return
+	}
+	if _, ok := a.requireUser(w, r, false); !ok {
+		return
+	}
+	if err := a.hist.Clear(); err != nil {
+		fail(w, http.StatusInternalServerError, "清空下载记录失败："+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (a *App) apiTasksAct(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		fail(w, http.StatusMethodNotAllowed, "方法不允许")
@@ -624,7 +686,7 @@ func (a *App) apiTasksAct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch in.Action {
-	case "pause", "start", "remove", "delete":
+	case "pause", "start", "remove", "delete", "wipe":
 	default:
 		fail(w, http.StatusBadRequest, "不支持的操作")
 		return
@@ -638,10 +700,14 @@ func (a *App) apiTasksAct(w http.ResponseWriter, r *http.Request) {
 	var code int
 	var raw []byte
 	var err error
-	if in.Action == "remove" {
-		// 界面上的“删除”始终连文件一起删：先暂停仍在下载的任务，再让引擎清理文件。
-		code, raw, err = a.removeTasks(ctx, in.IDs)
-	} else {
+	switch in.Action {
+	case "remove":
+		// “删除下载”：先暂停，再把任务移出列表，磁盘上已有文件保留。
+		code, raw, err = a.stopAndAct(ctx, in.IDs, "remove")
+	case "wipe", "delete":
+		// “无痕删除”：暂停后连文件一起删，再清理残留分片/临时文件与下载记录。
+		code, raw, err = a.wipeTasks(ctx, in.IDs)
+	default:
 		code, raw, err = a.mgr.Call(ctx, http.MethodPost, "/api/act", map[string]any{"action": in.Action, "ids": in.IDs})
 	}
 	if err != nil {
@@ -653,14 +719,34 @@ func (a *App) apiTasksAct(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, engineMessage(code))
 		return
 	}
+	if in.Action == "remove" {
+		a.hist.MarkRemoved(in.IDs)
+	}
+	if in.Action == "wipe" || in.Action == "delete" {
+		a.hist.Forget(in.IDs)
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
 }
 
-// removeTasks 先暂停（仍在下载的），等引擎停下后再连文件一起删除。
-func (a *App) removeTasks(ctx context.Context, ids []uint64) (int, []byte, error) {
+// wipeTasks 先暂停（仍在下载的），等引擎停下后连文件一起删除，
+// 再清理引擎可能留下的分片/临时文件，做到“无痕删除”。
+func (a *App) wipeTasks(ctx context.Context, ids []uint64) (int, []byte, error) {
+	targets := a.collectWipeTargets(ctx, ids)
+	code, raw, err := a.stopAndAct(ctx, ids, "delete")
+	if err != nil || code != http.StatusOK {
+		return code, raw, err
+	}
+	for _, t := range targets {
+		cleanDownloadTraces(t)
+	}
+	return code, raw, nil
+}
+
+// stopAndAct 先暂停任务并等待引擎停下，再执行 remove/delete。
+func (a *App) stopAndAct(ctx context.Context, ids []uint64, action string) (int, []byte, error) {
 	if _, _, err := a.mgr.Call(ctx, http.MethodPost, "/api/act", map[string]any{"action": "pause", "ids": ids}); err != nil {
 		return 0, nil, err
 	}
@@ -676,7 +762,63 @@ func (a *App) removeTasks(ctx context.Context, ids []uint64) (int, []byte, error
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	return a.mgr.Call(ctx, http.MethodPost, "/api/act", map[string]any{"action": "delete", "ids": ids})
+	return a.mgr.Call(ctx, http.MethodPost, "/api/act", map[string]any{"action": action, "ids": ids})
+}
+
+type wipeTarget struct {
+	File string
+	Path string
+}
+
+// collectWipeTargets 在删除前记录文件名与目录，删除后据此清理残留。
+func (a *App) collectWipeTargets(ctx context.Context, ids []uint64) []wipeTarget {
+	code, raw, err := a.mgr.Call(ctx, http.MethodGet, "/api/list", nil)
+	if err != nil || code != http.StatusOK {
+		return nil
+	}
+	var list struct {
+		Downloads []struct {
+			ID   uint64 `json:"id"`
+			File string `json:"file"`
+			Path string `json:"path"`
+		} `json:"downloads"`
+	}
+	if json.Unmarshal(raw, &list) != nil {
+		return nil
+	}
+	want := make(map[uint64]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	var out []wipeTarget
+	for _, d := range list.Downloads {
+		if !want[d.ID] || d.File == "" {
+			continue
+		}
+		dir := d.Path
+		if dir == "" {
+			// 远程接口可能不返回任务路径，退回当前下载目录。
+			dir = a.mgr.dirFn()
+		}
+		if dir != "" {
+			out = append(out, wipeTarget{File: d.File, Path: dir})
+		}
+	}
+	return out
+}
+
+// cleanDownloadTraces 删除目标文件以及引擎可能留下的同名前缀分片/状态文件。
+func cleanDownloadTraces(t wipeTarget) {
+	dir := filepath.Clean(t.Path)
+	base := filepath.Clean(filepath.Join(dir, t.File))
+	if !strings.HasPrefix(base, dir+string(os.PathSeparator)) {
+		return
+	}
+	for _, p := range []string{base, base + ".mdm.part", base + ".mdm.json", base + ".mdm.pieces"} {
+		if err := os.RemoveAll(p); err != nil {
+			log.Printf("[wipe] 清理 %s 失败：%v", p, err)
+		}
+	}
 }
 
 func anyRunning(raw []byte, ids []uint64) bool {
@@ -922,12 +1064,53 @@ func (a *App) apiUpdateApply(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "更新包里没有找到 .fpk 安装包，请前往 Gitee 手动下载")
 		return
 	}
-	a.captureRunningForUpdate()
 	if err := a.self.Apply(info, info.Latest); err != nil {
 		fail(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "target": info.Latest, "message": "已开始升级"})
+}
+
+func (a *App) apiEngine(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.requireUser(w, r, false); !ok {
+		return
+	}
+	force := r.URL.Query().Get("force") == "1"
+	writeJSON(w, http.StatusOK, a.engChk.Check(r.Context(), a.dataRoot, force))
+}
+
+// apiEngineStatus 允许未登录访问：内核升级期间界面需要持续读取进度。
+func (a *App) apiEngineStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		fail(w, http.StatusMethodNotAllowed, "方法不允许")
+		return
+	}
+	writeJSON(w, http.StatusOK, a.eng.Status())
+}
+
+func (a *App) apiEngineApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, http.StatusMethodNotAllowed, "方法不允许")
+		return
+	}
+	if _, ok := a.requireUser(w, r, false); !ok {
+		return
+	}
+	info := a.engChk.Check(r.Context(), a.dataRoot, true)
+	if info.Error != "" {
+		fail(w, http.StatusBadGateway, info.Error)
+		return
+	}
+	if !info.HasUpdate {
+		fail(w, http.StatusBadRequest, "当前内核已是最新版本")
+		return
+	}
+	a.captureRunningForUpdate()
+	if err := a.eng.Apply(info); err != nil {
+		fail(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "target": info.Latest, "message": "已开始内核升级"})
 }
 
 // captureRunningForUpdate 记录正在下载的任务，升级重启后由新进程继续。

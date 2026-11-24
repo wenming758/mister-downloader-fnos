@@ -13,7 +13,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -32,21 +31,30 @@ type UpdateStatus struct {
 	At      int64  `json:"at"`
 }
 
-// SelfUpdater 负责下载新版 FPK、校验并交给 fnOS 的 appcenter-cli 安装。
-// 安装过程会停掉本应用，因此状态写入磁盘，重启后的新进程继续对外汇报。
+// 程序升级只替换这些内容，不触碰 cmd/ 生命周期脚本、config/ 网关配置
+// 与下载引擎二进制（引擎由独立的内核升级通道维护）。
+var updateItems = []string{"ui", "licenses", "mdm-fnos-server"}
+
+// SelfUpdater 负责程序升级：下载新版 FPK、校验、解包，原子替换文件后
+// 直接 exec 新程序。整个过程不依赖应用中心，也不会主动停止自身进程。
 type SelfUpdater struct {
 	mu     sync.Mutex
 	dir    string
-	logDir string
+	appDir string
 	status UpdateStatus
 	busy   bool
 	http   *http.Client
+
+	// beforeRestart 在替换文件前调用，用于记录运行中的任务并停止下载引擎。
+	beforeRestart func()
+	// onAbort 在替换或重启失败后调用，用于重新拉起下载引擎。
+	onAbort func()
 }
 
-func NewSelfUpdater(dataRoot string) *SelfUpdater {
+func NewSelfUpdater(appDir, dataRoot string) *SelfUpdater {
 	return &SelfUpdater{
 		dir:    filepath.Join(dataRoot, "updates"),
-		logDir: filepath.Join(dataRoot, "logs"),
+		appDir: appDir,
 		http: &http.Client{
 			Timeout: 30 * time.Minute,
 			Transport: &http.Transport{
@@ -78,8 +86,9 @@ func (s *SelfUpdater) Init() {
 	if st.State == "" {
 		st.State = "idle"
 	}
-	errFile := filepath.Join(s.dir, "install_error.txt")
+	// 1.0.8/1.0.9 的安装脚本会留下 install_error.txt，手动安装后仍可能读到旧状态。
 	detail := ""
+	errFile := filepath.Join(s.dir, "install_error.txt")
 	if raw, err := os.ReadFile(errFile); err == nil {
 		detail = strings.TrimSpace(string(raw))
 		if r := []rune(detail); len(r) > 900 {
@@ -87,25 +96,22 @@ func (s *SelfUpdater) Init() {
 		}
 	}
 	_ = os.Remove(errFile)
-	// 版本已经是目标版本：无论上次停在哪一步，都按升级成功处理。
-	if target != "" && sameVersion(cur, target) && st.State != "done" {
+	_ = os.Remove(filepath.Join(s.dir, "install.sh"))
+	// 当前版本已达到或超过目标版本：无论上次停在哪一步，都按升级成功处理。
+	if target != "" && (sameVersion(cur, target) || newerVersion(cur, target)) && st.State != "done" {
 		st.State = "done"
 		st.Percent = 100
 		st.Message = "已升级到 v" + cur
 		st.Error = ""
 	}
 	switch st.State {
-	case "downloading", "verifying":
+	case "downloading", "verifying", "installing":
 		st.State = "error"
 		st.Percent = 0
 		st.Message = "升级已中断"
 		st.Error = "升级过程被中断，请重新点击升级"
-	case "installing":
-		st.State = "error"
-		st.Message = "升级未完成"
-		st.Error = "升级未完成，当前仍为 v" + cur + "，请重试或前往 Gitee 手动安装"
 		if detail != "" {
-			st.Error = "升级未完成（当前仍为 v" + cur + "）：" + detail
+			st.Error = "升级过程被中断（当前仍为 v" + cur + "）：" + detail
 		}
 	}
 	st.At = time.Now().Unix()
@@ -117,11 +123,31 @@ func (s *SelfUpdater) Init() {
 		_ = os.Remove(s.fpkPath(st.Target))
 	}
 	_ = filepath.Walk(s.dir, func(p string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() && strings.HasSuffix(p, ".part") {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		name := info.Name()
+		if strings.HasSuffix(name, ".part") {
 			_ = os.Remove(p)
 		}
 		return nil
 	})
+	if st.State == "done" {
+		removeUpgradeDirs(s.dir)
+	}
+}
+
+// removeUpgradeDirs 清理升级过程生成的解包目录与备份目录。
+func removeUpgradeDirs(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() && (strings.HasPrefix(e.Name(), "staged-") || strings.HasPrefix(e.Name(), "backup-") || strings.HasPrefix(e.Name(), "engine-")) {
+			_ = os.RemoveAll(filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 func sameVersion(a, b string) bool {
@@ -185,7 +211,7 @@ func (s *SelfUpdater) setError(msg, detail string) {
 	log.Printf("[update] %s: %s", msg, detail)
 }
 
-// Apply 启动一次应用内升级，立即返回；实际进度通过 Status 查询。
+// Apply 启动一次程序升级，立即返回；实际进度通过 Status 查询。
 func (s *SelfUpdater) Apply(info UpdateInfo, target string) error {
 	s.mu.Lock()
 	if s.busy {
@@ -239,19 +265,48 @@ func (s *SelfUpdater) run(info UpdateInfo, target string) {
 		return
 	}
 
-	cli := findAppcenterCLI()
-	if cli == "" {
-		s.setError("当前系统不支持应用内升级", "未找到 appcenter-cli，请前往 Gitee 下载安装包后手动安装")
+	s.setStatus("installing", 88, "正在解包更新包…")
+	staged, err := stageFPK(fpk, filepath.Join(s.dir, "staged-"+target))
+	if err != nil {
+		_ = os.Remove(fpk)
+		s.setError("更新包解包失败", err.Error())
 		return
 	}
-	_ = os.Remove(filepath.Join(s.dir, "install_error.txt"))
-	s.setStatus("installing", 92, "正在安装更新并重启服务…")
-	// 安装必须由独立脚本完成：它会先停掉本进程，避免应用中心等待运行中的应用。
-	if err := s.startHelper(cli, fpk, target); err != nil {
-		s.setError("无法启动应用内安装", err.Error())
+	backup := filepath.Join(s.dir, "backup-"+target)
+	if err := backupItems(s.appDir, backup); err != nil {
+		_ = os.Remove(fpk)
+		_ = os.RemoveAll(staged)
+		s.setError("备份当前程序失败", err.Error())
 		return
 	}
-	s.watchInstall()
+
+	s.setStatus("installing", 93, "正在停止下载引擎并替换程序文件…")
+	if s.beforeRestart != nil {
+		s.beforeRestart()
+	}
+	if err := installItems(staged, s.appDir); err != nil {
+		s.fail(fpk, staged, backup, "替换程序文件失败", err)
+		return
+	}
+	s.setStatus("installing", 98, "正在重启应用…")
+	if err := execSelf(s.appDir); err != nil {
+		s.fail(fpk, staged, backup, "无法重启应用", err)
+		return
+	}
+}
+
+// fail 在替换或重启失败时恢复旧文件并重启下载引擎。
+func (s *SelfUpdater) fail(fpk, staged, backup, msg string, cause error) {
+	if err := restoreItems(backup, s.appDir); err != nil {
+		log.Printf("[update] 恢复旧程序失败: %v", err)
+	}
+	if s.onAbort != nil {
+		s.onAbort()
+	}
+	_ = os.Remove(fpk)
+	_ = os.RemoveAll(staged)
+	_ = os.RemoveAll(backup)
+	s.setError(msg, cause.Error())
 }
 
 func (s *SelfUpdater) wantSHA(ctx context.Context, tag string) string {
@@ -290,12 +345,33 @@ func (s *SelfUpdater) wantSHA(ctx context.Context, tag string) string {
 }
 
 func (s *SelfUpdater) download(ctx context.Context, url, dst string) error {
+	return downloadFile(ctx, s.http, url, dst, 300<<20, func(got, total int64) {
+		pct := 5
+		if total > 0 {
+			pct = 5 + int(float64(got)/float64(total)*75)
+			if pct > 80 {
+				pct = 80
+			}
+		}
+		s.mu.Lock()
+		s.status.State = "downloading"
+		s.status.Percent = pct
+		s.status.Message = "正在下载更新包…"
+		s.status.Bytes = got
+		s.status.Total = total
+		_ = s.saveLocked()
+		s.mu.Unlock()
+	})
+}
+
+// downloadFile 下载 url 到 dst，超过 max 字节时中止；进度回调按 250ms 节流。
+func downloadFile(ctx context.Context, client *http.Client, url, dst string, max int64, progress func(got, total int64)) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "mdm-fnos/"+appVersion)
-	res, err := s.http.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("连接更新源失败：%v", err)
 	}
@@ -309,7 +385,7 @@ func (s *SelfUpdater) download(ctx context.Context, url, dst string) error {
 	}
 	defer f.Close()
 	total := res.ContentLength
-	if total <= 0 || total > 300<<20 {
+	if total <= 0 || total > max {
 		total = 0
 	}
 	buf := make([]byte, 256<<10)
@@ -322,26 +398,12 @@ func (s *SelfUpdater) download(ctx context.Context, url, dst string) error {
 				return werr
 			}
 			got += int64(n)
-			if got > 300<<20 {
-				return fmt.Errorf("更新包超过 300MB，已停止下载")
+			if max > 0 && got > max {
+				return fmt.Errorf("更新包超过 %dMB，已停止下载", max>>20)
 			}
-			if time.Since(last) > 250*time.Millisecond {
+			if time.Since(last) > 250*time.Millisecond && progress != nil {
 				last = time.Now()
-				pct := 5
-				if total > 0 {
-					pct = 5 + int(float64(got)/float64(total)*75)
-					if pct > 80 {
-						pct = 80
-					}
-				}
-				s.mu.Lock()
-				s.status.State = "downloading"
-				s.status.Percent = pct
-				s.status.Message = "正在下载更新包…"
-				s.status.Bytes = got
-				s.status.Total = total
-				_ = s.saveLocked()
-				s.mu.Unlock()
+				progress(got, total)
 			}
 		}
 		if rerr == io.EOF {
@@ -351,162 +413,261 @@ func (s *SelfUpdater) download(ctx context.Context, url, dst string) error {
 			return fmt.Errorf("下载中断：%v", rerr)
 		}
 	}
-	if err := f.Sync(); err != nil {
-		return err
+	if progress != nil {
+		progress(got, total)
 	}
-	s.mu.Lock()
-	s.status.Bytes = got
-	s.status.Total = total
-	s.status.Percent = 80
-	_ = s.saveLocked()
-	s.mu.Unlock()
-	return nil
+	return f.Sync()
 }
 
-func findAppcenterCLI() string {
-	if p, err := exec.LookPath("appcenter-cli"); err == nil {
-		return p
+// stageFPK 把 FPK 里的 app.tgz 解到独立目录，供替换文件使用。
+func stageFPK(fpk, dst string) (string, error) {
+	if err := os.RemoveAll(dst); err != nil {
+		return "", err
 	}
-	for _, p := range []string{"/usr/trim/bin/appcenter-cli", "/usr/local/bin/appcenter-cli", "/usr/bin/appcenter-cli"} {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
+	if err := os.MkdirAll(dst, 0700); err != nil {
+		return "", err
+	}
+	f, err := os.Open(fpk)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return "", fmt.Errorf("不是有效的 FPK：%v", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	appTGZ := filepath.Join(dst, "app.tgz")
+	found := false
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("更新包已损坏：%v", err)
+		}
+		if cleanTarName(hdr.Name) != "app.tgz" || !hdr.FileInfo().Mode().IsRegular() {
+			continue
+		}
+		out, err := os.OpenFile(appTGZ, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		if err != nil {
+			return "", err
+		}
+		_, cerr := io.Copy(out, io.LimitReader(tr, 400<<20))
+		_ = out.Close()
+		if cerr != nil {
+			return "", cerr
+		}
+		found = true
+		break
+	}
+	if !found {
+		return "", fmt.Errorf("缺少 app.tgz")
+	}
+	if err := extractTGZ(appTGZ, dst); err != nil {
+		return "", err
+	}
+	_ = os.Remove(appTGZ)
+	for _, name := range updateItems {
+		if _, err := os.Stat(filepath.Join(dst, name)); err != nil {
+			return "", fmt.Errorf("更新包缺少 %s", name)
 		}
 	}
-	return ""
+	return dst, nil
 }
 
-// installHelper 是升级安装脚本。由服务器以独立会话启动，先停止应用再调用应用中心；
-// 安装命令限时 240 秒，失败或未生效时直接把 FPK 里的 app.tgz 解包覆盖，最后重新启动应用。
-const installHelper = `#!/bin/sh
-set -u
-CLI="$1"; FPK="$2"; TARGET="$3"; APPDIR="$4"; DATADIR="$5"; MAIN="$6"
-LOG="$DATADIR/logs/update.log"
-ERRF="$DATADIR/updates/install_error.txt"
-rm -f "$ERRF"
-log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [install] $*" >> "$LOG" 2>/dev/null; }
-note() { printf '%s\n' "$*" > "$ERRF" 2>/dev/null; }
+func cleanTarName(name string) string {
+	name = strings.TrimPrefix(filepath.ToSlash(name), "./")
+	return strings.TrimPrefix(name, "/")
+}
 
-log "开始升级到 v$TARGET：$FPK"
-TMP="$DATADIR/updates/unpack.$$"
-rm -rf "$TMP"; mkdir -p "$TMP" 2>/dev/null || true
-PKG="$FPK"
-# 复制一份再解包：新版服务启动后会删掉 updates/ 下的安装包。
-if cp "$FPK" "$TMP/pkg.fpk" 2>/dev/null; then PKG="$TMP/pkg.fpk"; fi
-"$MAIN" stop >>"$LOG" 2>&1 || true
-
-rc=127
-if [ -x "$CLI" ]; then
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 240 "$CLI" install-fpk "$FPK" </dev/null >>"$LOG" 2>&1
-    rc=$?
-  else
-    "$CLI" install-fpk "$FPK" </dev/null >>"$LOG" 2>&1 &
-    pid=$!
-    n=0
-    while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 240 ]; do sleep 1; n=$((n+1)); done
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null
-      rc=124
-    else
-      wait "$pid"; rc=$?
-    fi
-  fi
-fi
-log "install-fpk 退出码 $rc"
-
-ok=0
-if tar -xzf "$PKG" -C "$TMP" app.tgz >>"$LOG" 2>&1; then
-  mkdir -p "$TMP/app" 2>/dev/null || true
-  if tar -xzf "$TMP/app.tgz" -C "$TMP/app" >>"$LOG" 2>&1; then
-    if [ -f "$TMP/app/mdm-fnos-server" ] && cmp -s "$TMP/app/mdm-fnos-server" "$APPDIR/mdm-fnos-server"; then
-      ok=1
-      log "应用中心安装已生效"
-    fi
-  else
-    log "app.tgz 解包失败"
-  fi
-else
-  log "FPK 解包失败"
-fi
-
-if [ "$ok" != "1" ] && [ -f "$TMP/app/mdm-fnos-server" ]; then
-  log "改为本地解包覆盖 $APPDIR"
-  for item in mdm-fnos-server misterdownloadmanager misterdownloadmanager-cli ui licenses; do
-    [ -e "$TMP/app/$item" ] || continue
-    cp -a "$TMP/app/$item" "$APPDIR/" >>"$LOG" 2>&1 || ok=0
-  done
-  [ -f "$APPDIR/mdm-fnos-server" ] && cmp -s "$TMP/app/mdm-fnos-server" "$APPDIR/mdm-fnos-server" && ok=1
-fi
-rm -rf "$TMP"
-
-if [ "$ok" = "1" ]; then
-  chmod 0755 "$APPDIR/mdm-fnos-server" "$APPDIR/misterdownloadmanager" "$APPDIR/misterdownloadmanager-cli" 2>/dev/null || true
-elif [ "$rc" = "124" ]; then
-  note "应用中心安装命令超过 240 秒未返回，请通过应用中心手动安装（更新包已保存在应用数据目录 updates/ 下）"
-else
-  note "应用中心安装失败（退出码 $rc），请通过应用中心手动安装（更新包已保存在应用数据目录 updates/ 下）"
-fi
-
-log "启动应用（ok=$ok）"
-"$MAIN" start >>"$LOG" 2>&1 || true
-if [ "$ok" != "1" ]; then
-  tail -n 12 "$LOG" 2>/dev/null >>"$ERRF"
-fi
-log "升级脚本结束（ok=$ok）"
-exit 0
-`
-
-func (s *SelfUpdater) startHelper(cli, fpk, target string) error {
-	appDir := os.Getenv("APP_DIR")
-	if appDir == "" {
-		if exe, err := os.Executable(); err == nil {
-			appDir = filepath.Dir(exe)
-		}
-	}
-	dataDir := os.Getenv("DATA_DIR")
-	if dataDir == "" {
-		dataDir = filepath.Dir(s.dir)
-	}
-	if appDir == "" || dataDir == "" {
-		return fmt.Errorf("无法确定应用目录，请手动安装更新包")
-	}
-	if err := os.MkdirAll(s.dir, 0700); err != nil {
-		return err
-	}
-	script := filepath.Join(s.dir, "install.sh")
-	if err := os.WriteFile(script, []byte(installHelper), 0700); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(s.logDir, 0700); err != nil {
-		return err
-	}
-	logf, err := os.OpenFile(filepath.Join(s.logDir, "update.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
+// extractTGZ 安全解包：拒绝绝对路径与 ..，只写普通文件与目录。
+func extractTGZ(path, dst string) error {
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(logf, "\n%s [update] 启动升级脚本：v%s -> %s\n",
-		time.Now().Format("2006-01-02 15:04:05"), appVersion, fpk)
-	cmd := exec.Command("/bin/sh", script, cli, fpk, target, appDir, dataDir, filepath.Join(appDir, "cmd", "main"))
-	cmd.Stdout = logf
-	cmd.Stderr = logf
-	cmd.SysProcAttr = detachAttr()
-	err = cmd.Start()
-	_ = logf.Close()
-	return err
-}
-
-// watchInstall 防止安装命令静默挂起：超过 6 分钟仍未离开 installing 就报错并给出日志路径。
-func (s *SelfUpdater) watchInstall() {
-	deadline := time.Now().Add(6 * time.Minute)
-	for time.Now().Before(deadline) {
-		time.Sleep(5 * time.Second)
-		if s.Status().State != "installing" {
-			return
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	var total int64
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("解包失败：%v", err)
+		}
+		name := cleanTarName(hdr.Name)
+		if name == "" {
+			continue
+		}
+		target := filepath.Join(dst, filepath.FromSlash(name))
+		rel, err := filepath.Rel(dst, target)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("更新包包含非法路径：%s", hdr.Name)
+		}
+		mode := hdr.FileInfo().Mode()
+		switch {
+		case mode.IsDir():
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return err
+			}
+		case mode.IsRegular():
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			perm := os.FileMode(0644)
+			if mode.Perm()&0111 != 0 {
+				perm = 0755
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+			if err != nil {
+				return err
+			}
+			n, cerr := io.Copy(out, io.LimitReader(tr, 400<<20))
+			_ = out.Close()
+			if cerr != nil {
+				return cerr
+			}
+			total += n
+			if total > 600<<20 {
+				return fmt.Errorf("更新包解压后过大")
+			}
 		}
 	}
-	if s.Status().State == "installing" {
-		s.setError("安装没有完成", "安装命令长时间未返回。请重启应用后重试，或通过应用中心手动安装更新包（已保存在应用数据目录 updates/ 下）")
+	return nil
+}
+
+func backupItems(src, dst string) error {
+	if err := os.RemoveAll(dst); err != nil {
+		return err
 	}
+	if err := os.MkdirAll(dst, 0700); err != nil {
+		return err
+	}
+	for _, name := range updateItems {
+		from := filepath.Join(src, name)
+		if _, err := os.Stat(from); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if err := copyPath(from, filepath.Join(dst, name)); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func copyPath(src, dst string) error {
+	st, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if st.IsDir() {
+		if err := os.MkdirAll(dst, st.Mode().Perm()); err != nil {
+			return err
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if err := copyPath(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return copyFile(src, dst, st.Mode().Perm())
+}
+
+func copyFile(src, dst string, perm os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, cerr := io.Copy(out, in)
+	if cerr == nil {
+		cerr = out.Sync()
+	}
+	if err := out.Close(); cerr == nil {
+		cerr = err
+	}
+	return cerr
+}
+
+// installItems 用解包目录里的文件原子替换程序目录中的旧文件。
+// 先写同目录临时文件再 rename，运行中的可执行文件也能被替换。
+func installItems(staged, appDir string) error {
+	for _, name := range updateItems {
+		src := filepath.Join(staged, name)
+		if _, err := os.Stat(src); err != nil {
+			return fmt.Errorf("更新包缺少 %s", name)
+		}
+		if err := replacePath(src, filepath.Join(appDir, name)); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func restoreItems(backup, appDir string) error {
+	entries, err := os.ReadDir(backup)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var firstErr error
+	for _, e := range entries {
+		if err := replacePath(filepath.Join(backup, e.Name()), filepath.Join(appDir, e.Name())); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// replacePath 把 src 复制到 dst 所在目录的临时路径，再 rename 覆盖 dst。
+func replacePath(src, dst string) error {
+	tmp := filepath.Join(filepath.Dir(dst), "."+filepath.Base(dst)+".new")
+	_ = os.RemoveAll(tmp)
+	if err := copyPath(src, tmp); err != nil {
+		_ = os.RemoveAll(tmp)
+		return err
+	}
+	if st, err := os.Stat(dst); err == nil && st.IsDir() {
+		if err := os.RemoveAll(dst); err != nil {
+			_ = os.RemoveAll(tmp)
+			return err
+		}
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		// Windows 不允许 rename 覆盖已有文件，退回先删后改名。
+		if err2 := os.RemoveAll(dst); err2 == nil {
+			err = os.Rename(tmp, dst)
+		}
+		if err != nil {
+			_ = os.RemoveAll(tmp)
+			return err
+		}
+	}
+	return nil
 }
 
 // verifyFPK 校验外层 manifest、app.tgz 校验和、版本、平台与二进制架构。

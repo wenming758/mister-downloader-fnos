@@ -1,5 +1,5 @@
 appname                    = mister-downloader
-version                    = 1.0.9
+version                    = 1.0.10
 display_name               = Mister 下载器
 desc                       = 为飞牛 fnOS 打包的原生下载器，内置 Mister Download Manager 0.5.2 无界面引擎：多连接高速下载、断点续传、分类目录、队列与种子下载。应用带中文登录门禁（未登录完全隐藏内容）、管理员/运维员分级、下载目录设置与 Gitee 更新检测。仅支持 x86 设备，无需 Docker。
 source                     = thirdparty
@@ -19,4 +19,4 @@ ctl_stop                   = true
 checkport                  = false
 disable_authorization_path = true
 
-changelog                  = 1.0.9：新增“刷新”按钮，可立即拉取最新任务列表与下载进度；安装/升级脚本不再递归修改下载目录属主（大目录会让安装长时间停在最后一步），并记录安装阶段时间戳。
+changelog                  = 1.0.10：程序升级改为应用内替换并重启，不再依赖应用中心；新增独立“内核升级”，从上游 GitHub 发布升级下载引擎；新增下载记录与“删除下载/无痕删除”；下载目录属性不再反复递归修改。
