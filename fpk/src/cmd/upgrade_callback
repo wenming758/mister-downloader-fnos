@@ -22,8 +22,11 @@ for script in "$APP_ROOT"/cmd/*; do
   [ -f "$script" ] && chmod 0755 "$script" 2>/dev/null || true
 done
 
+# 只修正顶层目录属主：递归 chown 大容量下载目录会让应用中心长时间停在最后一步。
 if id -u "${TRIM_USERNAME:-mister_dl}" >/dev/null 2>&1; then
-  chown -R "${TRIM_USERNAME}:${TRIM_GROUPNAME:-$TRIM_USERNAME}" "$DATA_DIR" 2>/dev/null || true
+  for dir in "$DATA_DIR" "$DATA_DIR/run" "$DATA_DIR/logs" "$DATA_DIR/mdm" "$DATA_DIR/downloads"; do
+    [ -e "$dir" ] && chown "${TRIM_USERNAME}:${TRIM_GROUPNAME:-$TRIM_USERNAME}" "$dir" 2>/dev/null || true
+  done
 fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') [cmd/upgrade_callback] files prepared, starting" >> "$LOG_DIR/server.log" 2>/dev/null || true

@@ -10,7 +10,7 @@
 
 | 路径 | 说明 |
 | --- | --- |
-| `mister-downloader_1.0.8_x86.fpk` | 可直接安装的飞牛应用包（x86） |
+| `mister-downloader_1.0.9_x86.fpk` | 可直接安装的飞牛应用包（x86） |
 | `SHA256SUMS.txt` | 安装包与许可证文件的 SHA-256 |
 | `fpk/src/` | FPK 构建目录（manifest、生命周期脚本、网关入口、图标） |
 | `app/` | Go 适配层源码（登录/角色、下载引擎守护、网关反代、更新检测） |
@@ -22,13 +22,14 @@
 
 ## 安装
 
-1. 打开飞牛 fnOS 应用中心 → 手动安装，选择 `mister-downloader_1.0.8_x86.fpk`。
+1. 打开飞牛 fnOS 应用中心 → 手动安装，选择 `mister-downloader_1.0.9_x86.fpk`。
 2. 安装完成后，在桌面打开“Mister 下载器”（任意能打开应用的飞牛用户均可）。
 3. 首次打开会要求创建**应用管理员**（与飞牛系统账户相互独立），不限制飞牛账户身份。
 4. 登录后进入应用自带的**优化版**下载面板：粘贴直链或磁力链接即可下载；顶部按钮可切换到上游的**原生版** MDM 页面。未登录时整个应用仅显示登录框，不暴露任何下载内容或接口。
 5. 点击“添加下载”时会弹出对话框，可直接填写或修改**保存目录**（服务器绝对路径，如 `/vol2/1000/临时文件`）；目录不存在会自动创建，最近用过的目录会显示为可点击的路径标签，也可从输入框下拉选择。更换目录时引擎重启一次，运行中的任务会自动继续。
 6. 任务卡片的“删除”会先暂停任务，再彻底清除磁盘上已下载的部分（含 `.mdm.part`、`.mdm.json`），不可恢复。
-7. 在“设置”中可修改默认下载目录，保存后同样会重启引擎。
+7. 顶部“刷新”按钮会立即重新读取任务列表与下载进度，可用于查看其他设备新增的任务；刷新期间图标旋转，完成后提示当前任务数与等待获取种子的数量。
+8. 在“设置”中可修改默认下载目录，保存后同样会重启引擎。
 
 ### 磁力链接
 
@@ -93,8 +94,8 @@ chmod 0755 ../fpk/src/app/{mdm-fnos-server,misterdownloadmanager,misterdownloadm
 cd ../fpk
 fnpack build -d src
 cd ..
-python tools/patch-fpk.py fpk/mister-downloader.fpk mister-downloader_1.0.8_x86.fpk
-sha256sum mister-downloader_1.0.8_x86.fpk
+python tools/patch-fpk.py fpk/mister-downloader.fpk mister-downloader_1.0.9_x86.fpk
+sha256sum mister-downloader_1.0.9_x86.fpk
 ```
 
 上游 Linux 发行包获取：<https://github.com/anefzaoui/misterdownloadmanager/releases/tag/v0.5.2>（文件 `MisterDownloadManager-0.5.2-linux-x86_64.tar.gz`）。
@@ -110,8 +111,9 @@ Windows 下 `fnpack` 会把文件写成 `0666` 且不会更新 `checksum`，因�
 - 1.0.6 更新页已实测：按钮始终可见，无更新时显示“已是最新版本”并禁用；运维员账户也能进入升级流程（无更新时返回“当前已是最新版本”，不再返回权限错误）。
 - FPK 已用 `fnpack` 1.2.3 构建并校验：`platform=x86`、`checksum` 等于实际 `app.tgz` 的 MD5、`cmd/*` 与三个二进制均为 `0755`、全部 ELF 为 x86-64。
 - 1.0.7 无速度修复已实测：`magnet:?xt=urn:btih:292e1a6a…` 与 `ae31be06…` 添加后经公开缓存取得文件列表，保存的 `.torrent` 已包含磁力自带 tracker 与 14 个公开 tracker（此前缓存种子没有任何 announce，引擎只能走被网络阻断的 DHT）；用户给出的中文资源在 rqbit 与 libtorrent 上均只得到接近 0 的速率，而同网络下 Debian 镜像可达 17–22MB/s，确认是该资源仅由迅雷节点供源，界面已加入 2 分钟零数据提示。
+- 1.0.9 变更：“刷新”按钮调用带 force 的任务接口，即使正处于轮询或页面不可见也会立即请求；安装/升级脚本改为只修正数据目录顶层属主（不再递归 chown 整个下载目录），并在 `server.log` 记录安装阶段时间戳，便于定位应用中心停在 92% 的问题。
 - 1.0.8 升级修复已在本地用两种故障注入实测：安装命令直接失败、安装命令挂起（缩短为 3 秒模拟）时，升级脚本都会在限时后改用包内文件覆盖并重新启动应用；覆盖后 `mdm-fnos-server` 与安装包内文件逐字节一致，服务能重新拉起。
-- **尚未在真实飞牛设备上安装 1.0.8 验证**。从 1.0.6/1.0.7 升级到 1.0.8 时，若升级页仍停在 92%，请先在应用中心手动安装一次 `mister-downloader_1.0.8_x86.fpk`；此后的版本即可正常应用内升级。原生面板提示引擎未就绪时，请提供应用数据目录下 `logs/server.log` 与 `logs/update.log`。
+- **尚未在真实飞牛设备上安装 1.0.9 验证**。若升级页停在 92%，请先在应用中心手动安装一次 `mister-downloader_1.0.9_x86.fpk`，此后的版本即可正常应用内升级；若应用中心手动安装也停在 92%，请提供应用数据目录下 `logs/server.log`（其中记录了 install/upgrade 各阶段的时间戳）。原生面板提示引擎未就绪时，同时提供 `logs/update.log`。
 - 应用内升级日志位于应用数据目录 `logs/update.log`，安装失败的原因会直接显示在升级页。
 
 ## 许可与署名

@@ -40,6 +40,10 @@ def main():
                      "upgrade_init", "upgrade_callback", "uninstall_init", "uninstall_callback", "main"]:
             m = members.get("cmd/" + name)
             check(m is not None and m.mode & 0o777 == 0o755, "cmd/%s 存在且 0755" % name)
+        for name in ["install_callback", "upgrade_callback"]:
+            m = members.get("cmd/" + name)
+            raw = outer.extractfile(m).read() if m is not None else b""
+            check(b"chown -R" not in raw, "%s 不递归 chown 下载目录" % name)
 
         manifest = outer.extractfile("manifest").read()
         check(b"\r" not in manifest, "manifest 为 LF 换行")
@@ -109,6 +113,7 @@ def main():
                 check("迅雷等私有节点".encode("utf-8") in blob, "长时间零速度提示")
                 check(b"install_error.txt" in blob and b"timeout 240" in blob,
                       "升级脚本先停应用并限时安装")
+                check(b"btn-refresh" in blob and "刷新".encode("utf-8") in blob, "顶部刷新按钮")
         check(fields.get("maintainer") == "Ahmed Nefzaoui", "开发者 = 上游原作者")
         check(fields.get("maintainer_url") == "https://github.com/anefzaoui", "开发者链接")
         check(fields.get("distributor") == "wenming758", "发布者 = wenming758")
