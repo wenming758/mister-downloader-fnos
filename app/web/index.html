@@ -292,6 +292,8 @@
   .upd-sub { font-weight: 900; font-size: 14.5px; margin-bottom: 10px; }
   .upd-sub small { font-weight: 600; font-size: 12px; opacity: .65; margin-left: 6px; }
   .hist-list { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow: auto; }
+  .set-hr { border: none; border-top: 2px dashed color-mix(in srgb, var(--ink) 30%, transparent); margin: 18px 0; }
+  .set-sec { font-size: 12px; font-weight: 800; letter-spacing: .6px; color: var(--muted); margin-bottom: 8px; }
   .hist-row { border: 2px solid var(--ink); border-radius: 12px; padding: 8px 10px; background: var(--paper-2); display: flex; flex-direction: column; gap: 5px; }
   .hist-top { display: flex; align-items: center; gap: 8px; }
   .hist-name { flex: 1; min-width: 0; font-weight: 800; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -387,7 +389,7 @@
     </form>
 
     <div class="hint" id="gate-hint" hidden></div>
-    <div class="gate-foot">版本 <span id="gate-ver">1.0.10</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
+    <div class="gate-foot">版本 <span id="gate-ver">1.0.11</span> · 下载引擎 Mister Download Manager <span id="gate-up">0.5.2</span></div>
   </div>
 </div>
 
@@ -406,21 +408,9 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
       <span class="label">记录</span>
     </button>
-    <button class="tbtn" id="btn-update" title="检查更新">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
-      <span class="label">更新</span><span class="badge hidden" id="upd-badge">1</span>
-    </button>
-    <button class="tbtn" id="btn-users" title="账户管理">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><path d="M16 5.5a3 3 0 0 1 0 5.6M17.5 15c2 .5 3.2 2 3.5 4.5"/></svg>
-      <span class="label">账户</span>
-    </button>
-    <button class="tbtn" id="btn-legacy" title="切换优化版 / 原生版界面">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/><circle cx="6.5" cy="6.5" r=".8" fill="currentColor"/></svg>
-      <span class="label">原生版</span>
-    </button>
     <button class="tbtn" id="btn-settings" title="设置">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7"/></svg>
-      <span class="label">设置</span>
+      <span class="label">设置</span><span class="badge hidden" id="upd-badge">新</span>
     </button>
     <button class="tbtn" id="btn-logout" title="退出登录">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 8l-4 4 4 4M6 12h9"/></svg>
@@ -508,7 +498,26 @@
       <button class="btn primary" id="set-save">保存并重启引擎</button>
       <button class="btn" id="btn-restart">重启下载引擎</button>
     </div>
-    <hr style="border:none;border-top:2px dashed color-mix(in srgb, var(--ink) 30%, transparent);margin:18px 0">
+    <hr class="set-hr">
+    <div class="set-sec">界面</div>
+    <div class="row">
+      <button class="btn" id="btn-legacy"><span class="label">切换到原生版面板</span></button>
+    </div>
+    <p style="margin-top:8px">原生版是上游 MDM 自带页面；“优化版”是应用自绘面板，功能相同但更稳定。</p>
+    <div id="set-users-sec">
+      <hr class="set-hr">
+      <div class="set-sec">账户</div>
+      <div class="row">
+        <button class="btn" id="btn-users">账户管理</button>
+      </div>
+      <p style="margin-top:8px">管理员可添加、删除账户或修改角色；运维员只能下载。</p>
+    </div>
+    <hr class="set-hr">
+    <div class="set-sec">版本与更新</div>
+    <div class="row">
+      <button class="btn" id="btn-update">检查程序与内核更新</button>
+    </div>
+    <hr class="set-hr">
     <div class="kv">
       <b>数据目录</b><span id="set-data"></span>
       <b>应用版本</b><span id="set-ver"></span>
@@ -745,6 +754,7 @@
     $('gate-ver').textContent = state.me.version || '';
     $('gate-up').textContent = state.me.upstream || '';
     $('btn-users').classList.toggle('hidden', state.me.user.role !== 'admin');
+    $('set-users-sec').classList.toggle('hidden', state.me.user.role !== 'admin');
     if (state.me.download_dir) sessionStorage.setItem('lastDir', state.me.download_dir);
     syncToken(state.me.mdm_token || '');
     renderDirOptions();
@@ -835,7 +845,7 @@
     var legacy = v === 'legacy';
     $('native').classList.toggle('hidden', legacy);
     var lbl = $('btn-legacy').querySelector('.label');
-    if (lbl) lbl.textContent = legacy ? '优化版' : '原生版';
+    if (lbl) lbl.textContent = legacy ? '切换回优化版面板' : '切换到原生版面板';
     var f = $('panel');
     if (legacy) {
       $('panel-loading').classList.remove('hidden');
@@ -1234,6 +1244,7 @@
   });
 
   $('btn-legacy').addEventListener('click', function () {
+    $('dlg-settings').close();
     setView(state.view === 'legacy' ? 'native' : 'legacy');
   });
   $('warn-legacy').addEventListener('click', function () { setView('legacy'); });
@@ -1792,6 +1803,7 @@
   });
 
   $('btn-update').addEventListener('click', function () {
+    $('dlg-settings').close();
     checkUpdate(true);
     $('dlg-update').showModal();
   });
@@ -1832,6 +1844,7 @@
   });
 
   $('btn-users').addEventListener('click', function () {
+    $('dlg-settings').close();
     openUsers();
     $('dlg-users').showModal();
   });

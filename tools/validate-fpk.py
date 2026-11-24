@@ -122,6 +122,11 @@ def main():
                 check("已升级到 v".encode("utf-8") in blob and b"backup-" in blob,
                       "应用内升级可回滚自愈")
                 check(b"btn-refresh" in blob and "刷新".encode("utf-8") in blob, "顶部刷新按钮")
+                check(b"btn-settings" in blob and "检查程序与内核更新".encode("utf-8") in blob
+                      and "切换到原生版面板".encode("utf-8") in blob, "更新/原生版入口并入设置")
+                check(b"set-users-sec" in blob and "账户管理".encode("utf-8") in blob
+                      and "版本与更新".encode("utf-8") in blob and b"set-hr" in blob,
+                      "设置分区：界面/账户/版本与更新")
         check(fields.get("maintainer") == "Ahmed Nefzaoui", "开发者 = 上游原作者")
         check(fields.get("maintainer_url") == "https://github.com/anefzaoui", "开发者链接")
         check(fields.get("distributor") == "wenming758", "发布者 = wenming758")
